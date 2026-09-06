@@ -422,6 +422,10 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
     var table: RichTable? = nil
     /// Section chrome. Only meaningful when `kind == .section`.
     var section: RichSectionStyle? = nil
+    /// Nesting level for list kinds (bullet / numbered / to-do), 0 or nil
+    /// at the margin. A flat level, never a children tree — see
+    /// `RichListIndent`. Ignored (and dropped on transform) for other kinds.
+    var indent: Int? = nil
     /// Forward-compat: a kind raw value this build doesn't know. The block
     /// renders/edits as a paragraph, but the original kind is preserved on
     /// re-encode so newer builds get their block back intact.
@@ -442,7 +446,8 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         toggleCollapsed: Bool? = nil,
         sketch: RichSketchDrawing? = nil,
         table: RichTable? = nil,
-        section: RichSectionStyle? = nil
+        section: RichSectionStyle? = nil,
+        indent: Int? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -456,6 +461,7 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         self.sketch = kind == .sketch ? (sketch ?? RichSketchDrawing()) : sketch
         self.table = kind == .table ? (table ?? RichTable()) : table
         self.section = kind == .section ? (section ?? .default) : section
+        self.indent = kind.supportsListIndent ? indent.map(RichListIndent.clamped).flatMap { $0 > 0 ? $0 : nil } : nil
     }
 
     static func table(_ table: RichTable = RichTable()) -> RichBlock {
@@ -515,9 +521,10 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         case sketch
         case table
         case section
+        case indent
 
         static var known: Set<String> {
-            Set(["id", "kind", "inlines", "checked", "element", "heading", "children", "callout", "toggleCollapsed", "sketch", "table", "section"])
+            Set(["id", "kind", "inlines", "checked", "element", "heading", "children", "callout", "toggleCollapsed", "sketch", "table", "section", "indent"])
         }
     }
 
@@ -564,6 +571,12 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         if kind == .section, section == nil {
             section = .default
         }
+        // Lenient: a malformed level never costs the block; a level on a
+        // non-list kind is meaningless and dropped.
+        let decodedIndent = (try? container.decodeIfPresent(Int.self, forKey: .indent)) ?? nil
+        indent = kind.supportsListIndent
+            ? decodedIndent.map(RichListIndent.clamped).flatMap { $0 > 0 ? $0 : nil }
+            : nil
         passthrough = RichPassthrough.unknownKeys(from: decoder, known: CodingKeys.known)
     }
 
@@ -585,6 +598,9 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         try container.encodeIfPresent(sketch, forKey: .sketch)
         try container.encodeIfPresent(table, forKey: .table)
         try container.encodeIfPresent(section, forKey: .section)
+        if kind.supportsListIndent, let indent, indent > 0 {
+            try container.encode(indent, forKey: .indent)
+        }
         try RichPassthrough.encode(passthrough, to: encoder, known: CodingKeys.known)
     }
 }
@@ -685,11 +701,12 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
         var numberedRun = 0
         var entries: [String] = []
         entries.reserveCapacity(blocks.count)
-        for block in blocks {
-            numberedRun = block.kind == .numberedList ? numberedRun + 1 : 0
+        let ordinals = RichListIndent.numberedOrdinals(for: blocks)
+        for (index, block) in blocks.enumerated() {
+            numberedRun = ordinals[index] + 1
             entries.append(plainTextEntry(
                 for: block,
-                indentation: indentation,
+                indentation: indentation + String(repeating: "  ", count: block.listIndentLevel),
                 depth: depth,
                 numberedPosition: numberedRun
             ))
@@ -718,9 +735,9 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
             case .divider:
                 return indentation + "───────────────"
             case .bulletList:
-                prefix = "• "
+                prefix = RichListIndent.bulletPrefix(level: block.listIndentLevel)
             case .numberedList:
-                prefix = "\(numberedPosition). "
+                prefix = RichListIndent.numberedPrefix(position: numberedPosition, level: block.listIndentLevel)
             case .checklist:
                 prefix = (block.checked ?? false) ? "☑ " : "☐ "
             case .content:
@@ -812,7 +829,7 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
         if line.hasPrefix("│ ") {
             return RichBlock(kind: .quote, inlines: [.text(String(line.dropFirst(2)))])
         }
-        if line.hasPrefix("• ") {
+        if RichListIndent.bulletPrefixLength(in: line) > 0 {
             return RichBlock(kind: .bulletList, inlines: [.text(String(line.dropFirst(2)))])
         }
         if line.hasPrefix("☐ ") {
@@ -996,6 +1013,9 @@ enum RichDocumentAttributeKeys {
     /// A block the continuous editor cannot render (table, section): one
     /// placeholder line carrying the block's JSON, restored on parse.
     static let opaqueBlockJSON = NSAttributedString.Key("CosmoOpaqueBlockJSON")
+    /// Nesting level of a list line (Int) — the continuous editor's round
+    /// trip for `RichBlock.indent`; the paragraph inset is derived from it.
+    static let listIndent = NSAttributedString.Key("CosmoListIndent")
 }
 
 enum RichDocumentSerializer {
@@ -1006,7 +1026,8 @@ enum RichDocumentSerializer {
         singleLine: Bool = false,
         baseFontWeight: NSFont.Weight = .regular,
         titleMode: Bool = false,
-        numberedListSeed: Int = 0
+        numberedListSeed: Int = 0,
+        insetsListIndent: Bool = true
     ) -> NSAttributedString {
         attributedString(
             from: document,
@@ -1016,7 +1037,8 @@ enum RichDocumentSerializer {
             singleLine: singleLine,
             baseFontWeight: baseFontWeight,
             titleMode: titleMode,
-            numberedListSeed: numberedListSeed
+            numberedListSeed: numberedListSeed,
+            insetsListIndent: insetsListIndent
         )
     }
 
@@ -1028,10 +1050,17 @@ enum RichDocumentSerializer {
         singleLine: Bool,
         baseFontWeight: NSFont.Weight,
         titleMode: Bool,
-        numberedListSeed: Int = 0
+        numberedListSeed: Int = 0,
+        /// Whether nested list levels become a paragraph inset in the
+        /// storage (the continuous editor) or stay a bare glyph + level
+        /// attribute because the HOST insets the row (block editor rows).
+        insetsListIndent: Bool = true
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let textColor = darkMode ? NSColor.white : NSColor(DS.documentText)
+        // Level-aware numbering: a deeper item never breaks the run above
+        // it, so "1., a., b., 2." numbers as the eye expects.
+        let numberedOrdinals = RichListIndent.numberedOrdinals(for: document.blocks, seed: numberedListSeed)
 
         for (index, block) in document.blocks.enumerated() {
             if index > 0 {
@@ -1049,22 +1078,12 @@ enum RichDocumentSerializer {
 
             let blockStart = result.length
 
-            // Compute list-relative position for numbered lists. When the
+            // List-relative position for numbered lists (1-based). When the
             // run reaches the document's first block, the seed carries the
             // count of numbered blocks BEFORE this document — a block row
             // serializes a single-block document and can't see its siblings
             // (every item rendered "1." without it).
-            var listPosition = 1
-            if block.kind == .numberedList {
-                var j = index - 1
-                while j >= 0 && document.blocks[j].kind == .numberedList {
-                    listPosition += 1
-                    j -= 1
-                }
-                if j < 0 {
-                    listPosition += numberedListSeed
-                }
-            }
+            let listPosition = numberedOrdinals[index] + 1
             let prefix = blockPrefix(for: block, listPosition: listPosition)
             if !prefix.isEmpty {
                 let prefixString = NSMutableAttributedString(string: prefix, attributes: blockPrefixAttributes(
@@ -1193,6 +1212,7 @@ enum RichDocumentSerializer {
                     }
                 }
             }
+            applyListIndent(to: result, from: blockStart, block: block, insets: insetsListIndent)
             addDepth(depth, to: result, from: blockStart)
         }
 
@@ -1355,7 +1375,8 @@ enum RichDocumentSerializer {
         }
 
         // Fallback: detect by text prefix (backward compat for legacy documents)
-        let (kind, contentStart, checked) = blockDescriptor(for: text)
+        let listLevel = RichListIndent.clamped(intAttribute(RichDocumentAttributeKeys.listIndent, in: line) ?? 0)
+        let (kind, contentStart, checked) = blockDescriptor(for: text, listLevel: listLevel)
         let contentRange = NSRange(location: min(contentStart, line.length), length: max(0, line.length - min(contentStart, line.length)))
         let content = line.attributedSubstring(from: contentRange)
         var inlines = inlineNodes(from: content)
@@ -1366,20 +1387,24 @@ enum RichDocumentSerializer {
                 inlines[index].marks.remove(.strikethrough)
             }
         }
-        return RichBlock(kind: kind, inlines: inlines, checked: checked)
+        return RichBlock(kind: kind, inlines: inlines, checked: checked, indent: listLevel)
     }
 
-    private static func blockDescriptor(for text: String) -> (RichBlockKind, Int, Bool?) {
+    /// `listLevel` is the line's stored nesting level — letter labels
+    /// ("a. ", "iv. ") only count as numbering at the levels that render
+    /// them, so a level-0 paragraph starting "e. " stays prose.
+    private static func blockDescriptor(for text: String, listLevel: Int = 0) -> (RichBlockKind, Int, Bool?) {
         if text.hasPrefix("### ") { return (.heading3, 4, nil) }
         if text.hasPrefix("## ") { return (.heading2, 3, nil) }
         if text.hasPrefix("# ") { return (.heading1, 2, nil) }
         if text.hasPrefix("│ ") { return (.quote, 2, nil) }
-        if text.hasPrefix("• ") { return (.bulletList, 2, nil) }
+        let bulletLength = RichListIndent.bulletPrefixLength(in: text)
+        if bulletLength > 0 { return (.bulletList, bulletLength, nil) }
         if text.hasPrefix("☐ ") { return (.checklist, 2, false) }
         if text.hasPrefix("☑ ") { return (.checklist, 2, true) }
-        if let range = text.range(of: #"^\d+\.\s"#, options: .regularExpression) {
-            return (.numberedList, text.distance(from: text.startIndex, to: range.upperBound), nil)
-        }
+        let allowsAlpha = RichListIndent.numberingStyle(level: listLevel) != .decimal
+        let numberedLength = RichListIndent.numberedPrefixLength(in: text, allowsAlpha: allowsAlpha)
+        if numberedLength > 0 { return (.numberedList, numberedLength, nil) }
         return (.paragraph, 0, nil)
     }
 
@@ -1787,6 +1812,9 @@ enum RichDocumentSerializer {
         return result
     }
 
+    /// GUARD-TWIN of `RichBlockKind.renderedPrefixLength` — both read the
+    /// `RichListIndent` glyph ladder, so a level's glyph and its measured
+    /// length can never disagree.
     private static func blockPrefix(for block: RichBlock, listPosition: Int) -> String {
         switch block.kind {
         case .paragraph, .image, .element, .content, .research, .callout, .toggle, .code, .sketch, .table, .section:
@@ -1798,11 +1826,39 @@ enum RichDocumentSerializer {
         case .divider:
             return ""
         case .bulletList:
-            return "• "
+            return RichListIndent.bulletPrefix(level: block.listIndentLevel)
         case .numberedList:
-            return "\(listPosition). "
+            return RichListIndent.numberedPrefix(position: listPosition, level: block.listIndentLevel)
         case .checklist:
             return (block.checked ?? false) ? "☑ " : "☐ "
+        }
+    }
+
+    /// Stamps a nested list block's level on its whole line (prefix and
+    /// content) so the parser reads it back, and — when the storage owns
+    /// the layout — insets the paragraph by `RichListIndent.insetPerLevel`
+    /// per level. Block rows pass `insets: false`: the SwiftUI row insets
+    /// itself, which is what lets the indent animate.
+    private static func applyListIndent(
+        to attributedString: NSMutableAttributedString,
+        from start: Int,
+        block: RichBlock,
+        insets: Bool
+    ) {
+        let level = block.listIndentLevel
+        guard level > 0 else { return }
+        let length = attributedString.length - start
+        guard length > 0 else { return }
+        let range = NSRange(location: start, length: length)
+        attributedString.addAttribute(RichDocumentAttributeKeys.listIndent, value: level, range: range)
+        guard insets else { return }
+        let inset = CGFloat(level) * RichListIndent.insetPerLevel
+        attributedString.enumerateAttribute(.paragraphStyle, in: range, options: []) { value, subRange, _ in
+            let base = (value as? NSParagraphStyle) ?? NSParagraphStyle.default
+            guard let updated = base.mutableCopy() as? NSMutableParagraphStyle else { return }
+            updated.firstLineHeadIndent = inset
+            updated.headIndent = inset
+            attributedString.addAttribute(.paragraphStyle, value: updated, range: subRange)
         }
     }
 

@@ -429,7 +429,7 @@ struct SidebarThinkspaceSection: View {
         Divider()
 
         Button(role: .destructive) {
-            Task { await manager.delete(thinkspace) }
+            Task { await manager.confirmDelete(thinkspace) }
         } label: {
             Label("Delete", systemImage: "trash")
         }

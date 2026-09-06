@@ -338,10 +338,10 @@ final class CreatorImportEngine {
         self.importedPosts = posts
         self.isCachedCatalog = true
 
-        // Rebuild profile from creator atom metadata
+        // Rebuild profile from creator atom metadata (by uuid — a platform
+        // filter would miss a creator the repair sweep has just healed).
         do {
-            let creators = try await repository.fetchCreators(platform: "instagram")
-            if let creatorAtom = creators.first(where: { $0.uuid == creatorUUID }),
+            if let creatorAtom = try await repository.fetch(uuid: creatorUUID),
                let meta = creatorAtom.metadataValue(as: CreatorMetadata.self) {
                 creatorProfile = ImportedCreatorProfile(
                     username: meta.handle?.replacingOccurrences(of: "@", with: "") ?? "",
@@ -385,6 +385,12 @@ final class CreatorImportEngine {
 
         guard let uuid = creatorUUID else { return }
 
+        // A pull is cumulative: the newest fetch joins what earlier pulls
+        // found (fresh rows win by shortcode), so "pull the latest" never
+        // forgets the outliers from a year ago.
+        let posts = Self.merge(cached: CatalogStore.load(creatorUUID: uuid) ?? [], fresh: posts)
+        importedPosts = posts
+
         // Save catalog to disk
         do {
             try CatalogStore.save(posts: posts, forCreator: uuid)
@@ -414,6 +420,15 @@ final class CreatorImportEngine {
             object: nil,
             userInfo: ["creatorUUID": uuid]
         )
+    }
+
+    /// Fresh rows replace cached rows with the same shortcode; everything
+    /// else survives. Newest first.
+    static func merge(cached: [ImportedPost], fresh: [ImportedPost]) -> [ImportedPost] {
+        var byShortcode: [String: ImportedPost] = [:]
+        for post in cached { byShortcode[post.shortcode] = post }
+        for post in fresh { byShortcode[post.shortcode] = post }
+        return byShortcode.values.sorted { $0.timestamp > $1.timestamp }
     }
 
     private func formatCatalogAge(from date: Date) -> String {
@@ -524,28 +539,12 @@ final class CreatorImportEngine {
         guard let profile = creatorProfile else {
             throw ImportError.apiError("No profile loaded")
         }
-
-        let handle = "@\(profile.username)"
-
-        // Check if creator already exists
-        let existingCreators = try await repository.fetchCreators(platform: "instagram")
-        if let existing = existingCreators.first(where: {
-            $0.metadataValue(as: CreatorMetadata.self)?.handle?.lowercased() == handle.lowercased()
-        }) {
-            // Update with latest profile data
-            return try await updateCreatorFromProfile(existing, profile: profile)
-        }
-
-        // Create new creator
-        var creator = try await repository.createCreator(
-            name: profile.fullName ?? profile.username,
-            handle: handle,
-            platform: "instagram"
-        )
-
-        // Enrich with profile data
-        creator = try await updateCreatorFromProfile(creator, profile: profile)
-        return creator
+        // The one directory: a creator the classifier minted from a captured
+        // post (any platform spelling, any handle casing) is the same creator.
+        guard let creator = try await CreatorDirectory.shared.resolve(
+            handle: profile.username, name: profile.fullName, platform: .instagram
+        ) else { throw ImportError.apiError("Could not resolve @\(profile.username)") }
+        return try await updateCreatorFromProfile(creator, profile: profile)
     }
 
     private func updateCreatorFromProfile(_ creator: Atom, profile: ImportedCreatorProfile) async throws -> Atom {

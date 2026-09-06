@@ -45,7 +45,9 @@ struct PipelinePage: View {
                 // Inside a host that already scrolls (a client hub, a space's
                 // Board view): flow in place — never a scroll inside a scroll.
                 embeddedContent
-            } else if workspace && currentView == .calendar {
+            } else if workspace && currentView != .list {
+                // The board and the calendar are VIEWPORTS: columns and the
+                // shelf scroll inside their own bounds, never the page.
                 viewportContent
             } else {
                 scrollContent
@@ -99,7 +101,7 @@ struct PipelinePage: View {
             .onMoveCommand { direction in moveCursor(direction) }
             .onKeyPress(.return) { openCursor() ? .handled : .ignored }
             .onKeyPress(.space) { quickLookCursor() ? .handled : .ignored }
-            .onKeyPress(.delete) { archiveSelection() ? .handled : .ignored }
+            .onKeyPress(.delete) { removeSelection() ? .handled : .ignored }
             .onChange(of: scrollHomeRequest) { _, _ in
                 withAnimation(reduceMotion ? nil : ProMotionSprings.gentle) {
                     proxy.scrollTo("pipeline-top", anchor: .top)
@@ -119,11 +121,12 @@ struct PipelinePage: View {
         .onMoveCommand { direction in moveCursor(direction) }
         .onKeyPress(.return) { openCursor() ? .handled : .ignored }
         .onKeyPress(.space) { quickLookCursor() ? .handled : .ignored }
-        .onKeyPress(.delete) { archiveSelection() ? .handled : .ignored }
+        .onKeyPress(.delete) { removeSelection() ? .handled : .ignored }
     }
 
-    /// The calendar is a viewport, not a page: the month fills the height and
-    /// the shelf scrolls inside its own bounds — never the whole page.
+    /// The board and the calendar are viewports, not pages: columns and the
+    /// month fill the height and scroll inside their own bounds — never the
+    /// whole page. A 130-piece backlog mounts a dozen cards.
     private var viewportContent: some View {
         VStack(alignment: .leading, spacing: DS.space20) {
             headerGroup
@@ -138,7 +141,7 @@ struct PipelinePage: View {
         .onMoveCommand { direction in moveCursor(direction) }
         .onKeyPress(.return) { openCursor() ? .handled : .ignored }
         .onKeyPress(.space) { quickLookCursor() ? .handled : .ignored }
-        .onKeyPress(.delete) { archiveSelection() ? .handled : .ignored }
+        .onKeyPress(.delete) { removeSelection() ? .handled : .ignored }
     }
 
     // MARK: Header (masthead + switcher + pills + filters)
@@ -409,6 +412,7 @@ struct PipelinePage: View {
         case .board:
             PipelineBoardView(
                 model: model,
+                layout: workspace ? .viewport : .flow,
                 cursorID: $cursorID,
                 selection: $selection,
                 selectionAnchor: $selectionAnchor,
@@ -519,10 +523,11 @@ struct PipelinePage: View {
             PipelineBulkBar(
                 count: selection.count,
                 clients: model.clients,
+                removal: selectionIsShipped ? .clearFromBoard : .archive,
                 onMove: { phase in model.bulkMove(Array(selection), to: phase); selection.removeAll() },
                 onSchedule: { bulkScheduleRequested = true },
                 onAssign: { client in model.bulkAssign(Array(selection), to: client); selection.removeAll() },
-                onArchive: { model.archive(Array(selection)); selection.removeAll() },
+                onRemove: { _ = removeSelection() },
                 onClear: { withAnimation(ProMotionSprings.snappy) { selection.removeAll() } }
             )
         }
@@ -693,11 +698,19 @@ struct PipelinePage: View {
         return true
     }
 
-    private func archiveSelection() -> Bool {
+    /// ⌫ takes the selection off the board. Shipped pieces are CLEARED (the
+    /// ledger, the calendar and search keep them); anything else is archived.
+    /// A mixed selection archives — the deeper verb never hides behind the
+    /// lighter one.
+    private func removeSelection() -> Bool {
         guard currentView != .calendar, !selection.isEmpty else { return false }
-        model.archive(Array(selection))
+        if selectionIsShipped { model.clearFromBoard(Array(selection)) } else { model.archive(Array(selection)) }
         selection.removeAll()
         return true
+    }
+
+    private var selectionIsShipped: Bool {
+        !selection.isEmpty && selection.allSatisfy { model.item($0)?.isShipped == true }
     }
 
     /// ⌘→ / ⌘← on the cursored card: the adjacent stage (Scheduled asks for a date).

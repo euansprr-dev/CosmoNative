@@ -298,6 +298,7 @@ struct InboxView: View {
                 onToggleSelect: { viewModel.toggleSelection(for: item) },
                 lanes: viewModel.lanes,
                 inquirySpaces: viewModel.inquirySpaces,
+                seedlings: viewModel.seedlings,
                 onMoveToLane: { lane in Task { await viewModel.moveToLane(item, lane: lane) } },
                 onStartInquiry: { space in
                     if let space {
@@ -307,6 +308,14 @@ struct InboxView: View {
                         viewModel.showOverride(for: item, focus: .inquiry)
                     }
                 },
+                onGrowSeedling: { seedling in
+                    if let seedling {
+                        Task { await viewModel.growSeedling(item, seedling: seedling) }
+                    } else {
+                        viewModel.showOverride(for: item, focus: .concepts)
+                    }
+                },
+                onSaveAsResearch: { viewModel.showOverride(for: item, focus: .research) },
                 onChooseDestination: { viewModel.showOverride(for: item) }
             )
             .transition(.asymmetric(

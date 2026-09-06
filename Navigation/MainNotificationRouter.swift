@@ -69,6 +69,7 @@ struct MainNotificationRouter: View {
         var addCommandKOriginal: (_ atomUUID: String) -> Void
         var fileAtomIntoThinkspace: (_ atomUUIDs: [String], _ targetThinkspaceId: String) -> Void
         var switchToThinkspace: (_ atomID: Int64) -> Void
+        var openCreatorDirectory: () -> Void
         var openCreatorProfile: (_ creatorUUID: String) -> Void
     }
 
@@ -84,7 +85,6 @@ struct MainNotificationRouter: View {
     @Binding var showSettings: Bool
     @Binding var showWorkbenchComposer: Bool
     @Binding var spokesPillar: Atom?
-    @Binding var showCreatorDatabase: Bool
 
     let actions: Actions
 
@@ -459,9 +459,7 @@ struct MainNotificationRouter: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("openCreatorDatabase"))) { _ in
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                    showCreatorDatabase = true
-                }
+                actions.openCreatorDirectory()
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("openCreatorProfile"))) { notification in
                 guard let creatorUUID = notification.userInfo?["creatorUUID"] as? String else { return }

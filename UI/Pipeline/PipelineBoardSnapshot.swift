@@ -13,6 +13,11 @@
 // Ordering: not started / in progress / review / ready newest edit first
 // with missed dates ahead of everything; shipped newest publish first,
 // inside the window.
+//
+// Published is a shelf, not a wall: a window (7/30/90 days or all time)
+// bounds it, and a piece the user CLEARED from the board stays off it —
+// while the ledger, the calendar, ⌘K and the client hub keep every
+// publish. What the window and the clearing hide is counted, never lost.
 
 import Foundation
 
@@ -87,12 +92,22 @@ struct PipelineBoardSnapshot: Equatable, Sendable {
     /// Archived rows handed in (the loader keeps them out of `load`, so this
     /// only counts what a caller deliberately passed).
     let archivedCount: Int
+    /// Shipped pieces that passed the filters but went out before the window
+    /// opened — what the Published foot row calls "older".
+    let olderShippedCount: Int
+    /// Shipped pieces the user cleared from the board — off the column unless
+    /// it is showing them.
+    let clearedShippedCount: Int
+    /// Cards name their client only when the visible board mixes owners; a
+    /// single-client board would repeat one name on every card.
+    let showsClientNames: Bool
     /// Card ids per column in rendered order (`Column.allCases` order) — the
     /// keyboard cursor walks this and nothing else.
     let cursorOrder: [[String]]
 
     static let empty = PipelineBoardSnapshot(
         cardsByColumn: [:], countsByColumn: [:], archivedCount: 0,
+        olderShippedCount: 0, clearedShippedCount: 0, showsClientNames: false,
         cursorOrder: Column.allCases.map { _ in [] }
     )
 
@@ -110,27 +125,44 @@ struct PipelineBoardSnapshot: Equatable, Sendable {
 
     // MARK: - Build
 
+    /// `shippedWindowDays` nil = all time. `showsCleared` puts cleared
+    /// pieces back on the Published column (dimmed) so they can be returned.
     static func build(
         content: [PipelineContentItem],
         sessionDaysByContent: [String: Date] = [:],
         perf: [String: ContentPerfSnapshot] = [:],
         filters: PipelineFilters = PipelineFilters(),
-        shippedWindowDays: Int = 30,
+        shippedWindowDays: Int? = 30,
+        showsCleared: Bool = false,
         today: Date = Calendar.current.startOfDay(for: Date()),
         calendar: Calendar = .current
     ) -> PipelineBoardSnapshot {
         let archivedCount = content.count { $0.phase == .archived }
         let dayStart = calendar.startOfDay(for: today)
-        let windowStart = calendar.date(byAdding: .day, value: -max(0, shippedWindowDays), to: dayStart) ?? dayStart
+        let windowStart: Date? = shippedWindowDays.map { days in
+            calendar.date(byAdding: .day, value: -max(0, days), to: dayStart) ?? dayStart
+        }
 
         var buckets: [Column: [ContentCard]] = [:]
+        var older = 0
+        var cleared = 0
+        var owners = Set<String?>()
         for item in content {
             guard item.phase != .archived,
                   filters.matches(title: item.title, clientName: item.clientName,
                                   platform: item.platform, format: item.contentFormat) else { continue }
             let sessionDay = sessionDaysByContent[item.id]
             let column = Column.column(for: stage(of: item, hasSession: sessionDay != nil))
-            if column == .shipped, let shipped = item.shippedAt, shipped < windowStart { continue }
+            if column == .shipped {
+                if item.isClearedFromBoard {
+                    cleared += 1
+                    if !showsCleared { continue }
+                } else if let windowStart, let shipped = item.shippedAt, shipped < windowStart {
+                    older += 1
+                    continue
+                }
+            }
+            owners.insert(item.clientUUID)
             buckets[column, default: []].append(ContentCard(
                 item: item,
                 sessionDay: sessionDay,
@@ -157,6 +189,9 @@ struct PipelineBoardSnapshot: Equatable, Sendable {
             cardsByColumn: cardsByColumn,
             countsByColumn: counts,
             archivedCount: archivedCount,
+            olderShippedCount: older,
+            clearedShippedCount: cleared,
+            showsClientNames: owners.count > 1,
             cursorOrder: cursorOrder
         )
     }

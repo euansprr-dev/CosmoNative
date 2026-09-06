@@ -51,6 +51,7 @@ enum BlockRowSyncPolicy {
         block.toggleCollapsed = existingBlock.toggleCollapsed
         block.section = existingBlock.section
         block.table = existingBlock.table
+        block.indent = existingBlock.indent
         block.passthrough = existingBlock.passthrough
         block.rawKind = existingBlock.rawKind
         if !existingBlock.children.isEmpty, block.children.isEmpty {
@@ -357,7 +358,49 @@ struct BlockTextEditorRow: View, Equatable {
             return false
         case .blockShortcut(let shortcut, let livePlainText):
             return applyBlockShortcut(shortcut, livePlainText: livePlainText)
+        case .indentListBlock(let deeper, let livePlainText):
+            return indentCurrentBlock(deeper: deeper, livePlainText: livePlainText)
         }
+    }
+
+    /// Tab / ⇧Tab on a list row. Reconciles the live text first (the
+    /// document binding lags ~50ms) so the keystroke before Tab survives,
+    /// then shifts the item with its subtree. A capped move (first item,
+    /// already at the margin) is still CONSUMED — a literal tab must never
+    /// land in a list row — but registers no undo step.
+    private func indentCurrentBlock(deeper: Bool, livePlainText: String) -> Bool {
+        guard let block = currentBlock, let currentPath, block.kind.supportsListIndent else { return false }
+
+        var workingDocument = document
+        let liveContent = block.kind.strippedRenderPrefix(from: livePlainText)
+        if liveContent != block.plainInlineText {
+            var workingBlock = block
+            workingBlock.inlines = [.text(liveContent)]
+            guard let reconciled = try? BlockOperations.replaceBlock(
+                in: workingDocument,
+                at: currentPath,
+                with: workingBlock
+            ) else { return false }
+            workingDocument = reconciled.document
+        }
+
+        guard let result = try? BlockOperations.indentListBlock(
+            in: workingDocument,
+            at: currentPath,
+            deeper: deeper
+        ) else { return false }
+        // Capped (first item, already at the margin): report "nothing moved"
+        // so the coordinator stops awaiting external content — the Tab itself
+        // is still consumed there.
+        if result.document == document {
+            return false
+        }
+        // The caret stays exactly where it was — only the row moves.
+        apply(
+            BlockOperationResult(document: result.document, focusPath: currentPath, intent: .preserveCaret),
+            undoActionName: deeper ? "Indent" : "Outdent"
+        )
+        return true
     }
 
     /// Keyboard block manipulation (⌘D, ⌥⌘↑/↓, ⌥⌘1–3, ⇧⌘L) — the handle
@@ -397,6 +440,8 @@ struct BlockTextEditorRow: View, Equatable {
             return toggleTransform(to: target, in: workingDocument, at: currentPath, current: block.kind)
         case .checklistToggle:
             return toggleTransform(to: .checklist, in: workingDocument, at: currentPath, current: block.kind)
+        case .indent, .outdent:
+            return indentCurrentBlock(deeper: shortcut == .indent, livePlainText: livePlainText)
         case .tableAddRowBelow, .tableMoveColumn, .tableMergeCells, .tableUnmergeCells, .tableOptions:
             return false
         }

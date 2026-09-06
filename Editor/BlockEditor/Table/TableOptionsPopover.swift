@@ -47,7 +47,7 @@ struct TableOptionsPopover: View {
             actionRow(id: "delete", icon: "trash", label: "Delete table", shortcut: "⌫", isDestructive: true, action: onDelete)
         }
         .padding(.vertical, DS.space6)
-        .frame(width: 248)
+        .frame(width: 280)
     }
 
     private func sectionLabel(_ text: String) -> some View {
@@ -96,6 +96,7 @@ struct TableOptionsPopover: View {
                 chrome: .bare,
                 selection: Binding(get: { table.style }, set: { onSetStyle($0) })
             )
+            .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, DS.space12)
         .frame(minHeight: 30)

@@ -197,8 +197,8 @@ private struct AtomWindowChromeTitleButton: View {
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
-        .help("Search & switch atoms")
-        .accessibilityLabel("\(context.state.title). Search and switch atoms")
+        .help("Switch item (⌘K)")
+        .accessibilityLabel("\(context.state.title). Switch item")
     }
 }
 
@@ -223,7 +223,7 @@ struct AtomWindowChromeTrailingControls: View {
 
         AtomWindowChromeIconButton(
             systemName: "magnifyingglass",
-            help: "Search items (⌘K)",
+            help: "Switch item (⌘K)",
             action: {
                 withAnimation(ProMotionSprings.snappy) {
                     context.actions.showSearch()
@@ -231,10 +231,17 @@ struct AtomWindowChromeTrailingControls: View {
             }
         )
 
-        createMenu
+        AtomWindowChromeCreateMenu(context: context)
     }
+}
 
-    private var createMenu: some View {
+/// The + menu: one row of the trailing island, and the switcher's own bar.
+struct AtomWindowChromeCreateMenu: View {
+    let context: AtomWindowChromePayload
+
+    @State private var isCreateHovered = false
+
+    var body: some View {
         Menu {
             Button("Idea", systemImage: AtomType.idea.iconName) {
                 context.actions.createAtom(.idea)
@@ -262,8 +269,6 @@ struct AtomWindowChromeTrailingControls: View {
         .help("Create atom")
         .accessibilityLabel("Create atom")
     }
-
-    @State private var isCreateHovered = false
 }
 
 /// The one universal bar for shell states (launcher, loading, generic atoms):

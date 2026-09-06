@@ -469,7 +469,8 @@ struct TableBlockView: View {
         case .tableOptions:
             coordinator.showsOptions = true
             return true
-        case .duplicate, .heading, .checklistToggle:
+        case .duplicate, .heading, .checklistToggle, .indent, .outdent:
+            // No list to nest inside a cell — let the host keep the event.
             return false
         }
     }

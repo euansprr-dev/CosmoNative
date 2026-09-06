@@ -57,6 +57,55 @@ struct SlideTextStandIn: View {
     }
 }
 
+/// The slide editor's text view. One transcript is many NSTextViews, and a
+/// plain NSTextView keeps its selection when it stops being first responder —
+/// so highlighting slide 2 after slide 1 left BOTH lit (one in the active
+/// wash, one in the grey inactive one), and the study read as two competing
+/// selections. There is one highlight in a transcript: the one under your
+/// hand. Losing first responder collapses the selection to its caret, so the
+/// insertion point is exactly where you left it when you click back.
+final class SwipeSlideTextView: NSTextView {
+
+    /// The same scroll view / text view pairing `NSTextView.scrollableTextView()`
+    /// builds — width-tracking container, vertically resizable, no scroller —
+    /// but with this subclass as the document view.
+    static func makeScrollableEditor() -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+
+        let textView = SwipeSlideTextView(frame: .zero)
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned {
+            collapseSelectionToCaret()
+        }
+        return resigned
+    }
+
+    /// Fold any range down to its insertion point. Called on the way out of
+    /// first responder, so the next slide you highlight is the only one lit.
+    func collapseSelectionToCaret() {
+        let range = selectedRange()
+        guard range.length > 0 else { return }
+        setSelectedRange(NSRange(location: range.location, length: 0))
+    }
+}
+
 /// A text editor for a single transcript slide.
 /// Command-Return creates a new slide; Return inserts a newline.
 struct SlideTextEditor: NSViewRepresentable {
@@ -67,7 +116,7 @@ struct SlideTextEditor: NSViewRepresentable {
     var textColor: Color = SwipeTranscriptCardPalette.text
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
+        let scrollView = SwipeSlideTextView.makeScrollableEditor()
         let textView = scrollView.documentView as! NSTextView
 
         let editorTextColor = NSColor(textColor)

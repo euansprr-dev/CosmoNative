@@ -358,6 +358,11 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         merged.publishedAt = merged.publishedAt ?? existing.publishedAt
         merged.postShortcode = merged.postShortcode ?? existing.postShortcode
 
+        // The creator link — set by the importer, the Study picker or a
+        // previous pass; a fresh analysis that can't name the author must not
+        // orphan the post from its creator.
+        merged.creatorUUID = merged.creatorUUID ?? existing.creatorUUID
+
         // Study state + user inputs
         merged.studiedAt = merged.studiedAt ?? existing.studiedAt
         merged.practiceAttempts = merged.practiceAttempts ?? existing.practiceAttempts

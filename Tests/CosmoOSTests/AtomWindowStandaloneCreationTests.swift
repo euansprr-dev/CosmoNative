@@ -98,7 +98,23 @@ final class AtomWindowStandaloneCreationTests: XCTestCase {
 
         let persisted = try await AtomRepository.shared.fetch(uuid: created.uuid)
         XCTAssertNotNil(persisted)
-        XCTAssertTrue(restoredViewModel.recentAtoms.contains(where: { $0.uuid == created.uuid }))
+
+        // An open item means the switcher stays down; lifting it lists the
+        // item first under Continue, marked open.
+        XCTAssertFalse(restoredViewModel.isSwitcherVisible)
+        restoredViewModel.showSwitcher()
+        XCTAssertTrue(restoredViewModel.isSwitcherVisible)
+        var openRow: AtomSwitcherRow?
+        for _ in 0..<40 where openRow == nil {
+            try await Task.sleep(for: .milliseconds(50))
+            openRow = restoredViewModel.switcher.flatRows.first { $0.uuid == created.uuid }
+        }
+        XCTAssertEqual(openRow?.isOpen, true)
+        XCTAssertEqual(restoredViewModel.switcher.sections.first?.id, "continue")
+        XCTAssertEqual(restoredViewModel.switcher.sections.first?.rows.first?.uuid, created.uuid)
+
+        restoredViewModel.dismissSwitcher()
+        XCTAssertFalse(restoredViewModel.isSwitcherVisible)
     }
 
     func testLibraryShowsStandaloneAtomsInDedicatedHomeSection() async throws {

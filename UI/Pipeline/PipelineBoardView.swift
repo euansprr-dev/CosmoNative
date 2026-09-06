@@ -2,14 +2,29 @@
 // The board: five stage columns over one query. Dropping a card into a
 // column IS the stage change. Not started is the backlog — collapsed to a
 // rail by default so the board reads short and the count stays honest;
-// dragging out of the rail is the literal "activate". Columns are lazy; the
-// horizontal scroll is never bound to a ScrollPosition (the 120fps law).
+// dragging out of the rail is the literal "activate".
+//
+// Viewport law (September 2026): the board is a VIEWPORT, not a page. Each
+// column scrolls inside its own bounds under a pinned header and above a
+// pinned foot, so a 130-piece backlog mounts a dozen cards, never a wall.
+// (A LazyVStack under a horizontal scroll inside the page scroll has no
+// viewport to be lazy in — it mounted every card, shadows, tooltips, menus
+// and drag providers included.) Embedded hosts that already scroll get the
+// flow layout — never a scroll inside a scroll. The horizontal scroll is
+// never bound to a ScrollPosition (the 120fps law).
 
 import SwiftUI
 import AppKit
 
+/// How the board sits in its host: a viewport whose columns scroll, or a
+/// flow the host page scrolls.
+enum PipelineBoardLayout: Sendable {
+    case viewport, flow
+}
+
 struct PipelineBoardView: View {
     let model: PipelinePageModel
+    var layout: PipelineBoardLayout = .flow
     @Binding var cursorID: String?
     /// Finder selection over the board (item uuids): click, ⌘ toggle, ⇧ range
     /// across columns in visible order. A drag from a selected card moves them all.
@@ -35,11 +50,12 @@ struct PipelineBoardView: View {
             HStack(alignment: .top, spacing: DS.space12) {
                 ForEach(model.visibleColumns) { column in
                     if model.isCollapsed(column) {
-                        PipelineCollapsedColumn(column: column, model: model)
+                        PipelineCollapsedColumn(column: column, model: model, fillsHeight: layout == .viewport)
                     } else {
                         PipelineColumnView(
                             column: column,
                             width: columnWidth,
+                            layout: layout,
                             model: model,
                             cursorID: $cursorID,
                             selection: $selection,
@@ -52,12 +68,13 @@ struct PipelineBoardView: View {
                     }
                 }
             }
-            .padding(.bottom, DS.space8)
+            .frame(maxHeight: layout == .viewport ? .infinity : nil, alignment: .top)
+            .padding(.bottom, layout == .viewport ? 0 : DS.space8)
             .animation(ProMotionSprings.snappy, value: model.collapsedColumns)
         }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { availableWidth = $0 }
         .scrollIndicators(.automatic)
-        .scrollClipDisabled()
+        .scrollClipDisabled(layout == .flow)
     }
 
     /// Visible order, column by column — what ⇧-click ranges walk.
@@ -98,6 +115,7 @@ struct PipelineBoardView: View {
 struct PipelineColumnView: View {
     let column: PipelineBoardSnapshot.Column
     var width: CGFloat = 236
+    var layout: PipelineBoardLayout = .flow
     let model: PipelinePageModel
     @Binding var cursorID: String?
     @Binding var selection: Set<String>
@@ -109,20 +127,26 @@ struct PipelineColumnView: View {
 
     @State private var isTargeted = false
     @State private var isHeaderHovered = false
+    /// Cards have slid under the header / are still waiting below the foot:
+    /// the edges dissolve only then, never on a column at rest.
+    @State private var scrolledUnderHeader = false
+    @State private var scrolledAboveFoot = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var snapshot: PipelineBoardSnapshot { model.snapshot }
     private var cards: [PipelineBoardSnapshot.ContentCard] { snapshot.cardsByColumn[column] ?? [] }
     private var count: Int { snapshot.countsByColumn[column] ?? cards.count }
     private var dropTint: Color { ShelfDragSession.shared.activeColor ?? column.tint }
+    private var scrolls: Bool { layout == .viewport }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
+        VStack(alignment: .leading, spacing: 0) {
             header
-            columnBody
-            if isTargeted { placeholderSlot }
-            if column != .shipped { newRow }
+            if scrolls { scrollingCards } else { flowingCards }
+            foot
         }
         .frame(width: width, alignment: .top)
+        .frame(maxHeight: scrolls ? .infinity : nil, alignment: .top)
         .padding(DS.space6)
         .background(isTargeted ? dropTint.opacity(0.08) : Color.clear, in: .rect(cornerRadius: 14))
         .overlay(
@@ -139,8 +163,11 @@ struct PipelineColumnView: View {
         }
     }
 
+    // MARK: Header
+
     /// The column is a status object: its tint, its name in the one header
-    /// voice, a live count, and on hover the two verbs a column owns.
+    /// voice, a live count, and on hover the two verbs a column owns. Right-
+    /// click opens the same verbs as a menu; Published adds its window.
     private var header: some View {
         HStack(alignment: .center, spacing: DS.space6) {
             Circle()
@@ -151,27 +178,16 @@ struct PipelineColumnView: View {
                 .font(DS.smallCaps)
                 .tracking(DS.smallCapsTracking)
                 .foregroundStyle(DS.giltInk)
-            if column == .shipped {
-                Text("30d")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-            }
+            if column == .shipped { windowChip }
             Spacer(minLength: DS.space6)
             Text("\(count)")
                 .font(DS.caption2.weight(.medium))
                 .monospacedDigit()
                 .foregroundStyle(DS.textMuted)
                 .contentTransition(.numericText())
-            HStack(spacing: DS.space2) {
-                if column != .shipped {
-                    headerVerb("plus", "New piece in \(column.title)") { model.createDraft(stage: column.stage) }
-                }
-                headerVerb("chevron.left", "Collapse \(column.title)") {
-                    withAnimation(ProMotionSprings.snappy) { model.toggleCollapsed(column) }
-                }
-            }
-            .opacity(isHeaderHovered ? 1 : 0)
-            .animation(ProMotionSprings.hover, value: isHeaderHovered)
+            headerVerbs
+                .opacity(isHeaderHovered ? 1 : 0)
+                .animation(ProMotionSprings.hover, value: isHeaderHovered)
         }
         .frame(minHeight: 22)
         .padding(.horizontal, DS.space6)
@@ -181,11 +197,25 @@ struct PipelineColumnView: View {
         }
         .contentShape(.rect)
         .onHover { isHeaderHovered = $0 }
+        .contextMenu { columnMenu }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(column.title), \(count)")
     }
 
-    private func headerVerb(_ icon: String, _ help: String, _ action: @escaping () -> Void) -> some View {
+    private var headerVerbs: some View {
+        HStack(spacing: DS.space2) {
+            if column == .shipped {
+                headerVerb("tray.and.arrow.down", clearAllHelp, disabled: clearableCount == 0) { model.clearPublishedColumn() }
+            } else {
+                headerVerb("plus", "New piece in \(column.title)") { model.createDraft(stage: column.stage) }
+            }
+            headerVerb("chevron.left", "Collapse \(column.title)") {
+                withAnimation(ProMotionSprings.snappy) { model.toggleCollapsed(column) }
+            }
+        }
+    }
+
+    private func headerVerb(_ icon: String, _ help: String, disabled: Bool = false, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(DS.caption2.weight(.semibold))
@@ -194,38 +224,171 @@ struct PipelineColumnView: View {
                 .background(DS.glassSectionFill, in: .capsule)
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.45 : 1)
         .help(help)
         .accessibilityLabel(help)
     }
 
+    /// The Published window, worn as the header's own chip: a menu, not a
+    /// label — 7/30/90 days or all time, plus the clearing verbs.
+    private var windowChip: some View {
+        Menu { publishedMenuItems } label: {
+            HStack(spacing: 2) {
+                Text(model.publishedWindow.chip)
+                Image(systemName: "chevron.down")
+                    .imageScale(.small)
+                    .accessibilityHidden(true)
+            }
+            .font(DS.caption2.weight(.medium))
+            .foregroundStyle(DS.textMuted)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Published shows \(model.publishedWindow.title.lowercased()) — click to change")
+        .accessibilityLabel("Published window, \(model.publishedWindow.title)")
+    }
+
+    // MARK: Menus
+
     @ViewBuilder
-    private var columnBody: some View {
-        if cards.isEmpty {
-            teachingRow(column.teachingLine)
+    private var columnMenu: some View {
+        if column == .shipped {
+            publishedMenuItems
         } else {
-            contentCards
+            Button("New piece in \(column.title)", systemImage: "plus") { model.createDraft(stage: column.stage) }
+        }
+        Divider()
+        Button("Collapse \(column.title)", systemImage: "chevron.left") {
+            withAnimation(ProMotionSprings.snappy) { model.toggleCollapsed(column) }
         }
     }
 
-    private var contentCards: some View {
-        LazyVStack(spacing: DS.space8) {
-            ForEach(cards) { card in
-                PipelineBoardCard(
-                    card: card,
-                    column: column,
-                    isCursor: cursorID == card.id,
-                    clients: model.clients,
-                    actions: actions(for: card.item),
-                    isSelected: selection.contains(card.item.id),
-                    selectionCount: selection.count,
-                    onSelect: { onSelect(card.item) },
-                    dragString: { dragString(card.item) }
-                )
+    /// Clearing takes shipped pieces off the board and nowhere else — the
+    /// ledger, the calendar, ⌘K and the client hub keep them. Undo is ⌘Z;
+    /// the foot row can show them again.
+    @ViewBuilder
+    private var publishedMenuItems: some View {
+        Section("Show") {
+            ForEach(PipelinePublishedWindow.allCases) { window in
+                Button { model.publishedWindow = window } label: {
+                    if window == model.publishedWindow {
+                        Label(window.title, systemImage: "checkmark")
+                    } else {
+                        Text(window.title)
+                    }
+                }
+            }
+        }
+        Divider()
+        Button(clearAllTitle, systemImage: "tray.and.arrow.down") { model.clearPublishedColumn() }
+            .disabled(clearableCount == 0)
+        if snapshot.clearedShippedCount > 0 {
+            Button(model.showsClearedPublished ? "Hide cleared pieces" : "Show \(snapshot.clearedShippedCount) cleared",
+                   systemImage: model.showsClearedPublished ? "eye.slash" : "eye") {
+                model.showsClearedPublished.toggle()
+            }
+            Button("Return all \(snapshot.clearedShippedCount) to board", systemImage: "tray.and.arrow.up") {
+                model.returnAllToBoard()
             }
         }
     }
 
-    /// The gap a dragged card will fill — the drop reads as a place, not a zone.
+    private var clearableCount: Int { cards.count { !$0.item.isClearedFromBoard } }
+
+    private var clearAllTitle: String {
+        switch clearableCount {
+        case 0: return "Clear from board"
+        case 1: return "Clear 1 piece from board"
+        default: return "Clear \(clearableCount) pieces from board"
+        }
+    }
+
+    private var clearAllHelp: String {
+        "Clear from board — stays in List, Calendar and search (⌘Z undoes)"
+    }
+
+    // MARK: Cards
+
+    /// The viewport column: cards scroll inside their own bounds. The header
+    /// and foot stay put; the edges dissolve only once cards pass under them.
+    private var scrollingCards: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                LazyVStack(spacing: DS.space8) {
+                    if isTargeted { placeholderSlot }
+                    if cards.isEmpty { teachingRow(column.teachingLine) } else { cardList }
+                }
+                .padding(.horizontal, DS.space6)
+                .padding(.top, DS.space8)
+                .padding(.bottom, DS.space10)
+            }
+            .scrollIndicators(.automatic)
+            .onScrollGeometryChange(for: Bool.self, of: { $0.contentOffset.y > 1 }) { _, under in
+                scrolledUnderHeader = under
+            }
+            .onScrollGeometryChange(for: Bool.self, of: { geometry in
+                geometry.contentOffset.y + geometry.containerSize.height < geometry.contentSize.height - 1
+            }) { _, above in
+                scrolledAboveFoot = above
+            }
+            .overlay(alignment: .top) { edgeFade(.top).opacity(scrolledUnderHeader ? 1 : 0) }
+            .overlay(alignment: .bottom) { edgeFade(.bottom).opacity(scrolledAboveFoot ? 1 : 0) }
+            .animation(reduceMotion ? nil : ProMotionSprings.hover, value: scrolledUnderHeader)
+            .animation(reduceMotion ? nil : ProMotionSprings.hover, value: scrolledAboveFoot)
+            .onChange(of: cursorID) { _, id in reveal(id, in: proxy) }
+        }
+    }
+
+    /// The flow column (embedded hosts): the page scrolls, the column flows.
+    private var flowingCards: some View {
+        LazyVStack(spacing: DS.space8) {
+            if isTargeted { placeholderSlot }
+            if cards.isEmpty { teachingRow(column.teachingLine) } else { cardList }
+        }
+        .padding(.horizontal, DS.space6)
+        .padding(.top, DS.space8)
+        .padding(.bottom, DS.space10)
+    }
+
+    private var cardList: some View {
+        ForEach(cards) { card in
+            PipelineBoardCard(
+                card: card,
+                column: column,
+                isCursor: cursorID == card.id,
+                showsClient: snapshot.showsClientNames,
+                clients: model.clients,
+                actions: actions(for: card.item),
+                isSelected: selection.contains(card.item.id),
+                selectionCount: selection.count,
+                onSelect: { onSelect(card.item) },
+                dragString: { dragString(card.item) }
+            )
+        }
+    }
+
+    /// The keyboard cursor stays in view: the minimum scroll that reveals it.
+    private func reveal(_ id: String?, in proxy: ScrollViewProxy) {
+        guard let id, cards.contains(where: { $0.id == id }) else { return }
+        withAnimation(reduceMotion ? nil : ProMotionSprings.snappy) { proxy.scrollTo(id) }
+    }
+
+    /// The page colour dissolving the first/last card under the pinned rows.
+    private func edgeFade(_ edge: VerticalEdge) -> some View {
+        LinearGradient(
+            colors: [DS.bg, DS.bg.opacity(0)],
+            startPoint: edge == .top ? .top : .bottom,
+            endPoint: edge == .top ? .bottom : .top
+        )
+        .frame(height: 14)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    /// The gap a dragged card will fill — at the top, where a moved piece
+    /// lands (newest edit first), so the drop reads as a place, not a zone.
     private var placeholderSlot: some View {
         RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
             .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
@@ -234,13 +397,6 @@ struct PipelineColumnView: View {
             .frame(height: 56)
             .transition(.opacity.combined(with: .scale(scale: 0.97)))
             .accessibilityHidden(true)
-    }
-
-    /// Notion's foot-of-column New: a quiet row that becomes a piece born in
-    /// this stage.
-    private var newRow: some View {
-        PipelineNewRow(title: "New") { model.createDraft(stage: column.stage) }
-            .help("New piece in \(column.title)")
     }
 
     private func teachingRow(_ line: String) -> some View {
@@ -258,6 +414,47 @@ struct PipelineColumnView: View {
             )
     }
 
+    // MARK: Foot
+
+    /// Notion's foot-of-column New for working columns; for Published, an
+    /// honest count of what the window and the clearing keep off the board.
+    @ViewBuilder
+    private var foot: some View {
+        if column == .shipped {
+            publishedFoot
+        } else {
+            PipelineFootRow(title: "New", icon: "plus") { model.createDraft(stage: column.stage) }
+                .help("New piece in \(column.title)")
+        }
+    }
+
+    @ViewBuilder
+    private var publishedFoot: some View {
+        let older = snapshot.olderShippedCount
+        let cleared = snapshot.clearedShippedCount
+        if older > 0 || cleared > 0 {
+            HStack(spacing: DS.space4) {
+                if older > 0 {
+                    PipelineFootRow(title: older == 1 ? "1 older" : "\(older) older", icon: "clock.arrow.circlepath") {
+                        model.publishedWindow = .allTime
+                    }
+                    .help("Published before the window opened — show all time")
+                }
+                if cleared > 0 {
+                    PipelineFootRow(
+                        title: model.showsClearedPublished ? "Hide cleared" : (cleared == 1 ? "1 cleared" : "\(cleared) cleared"),
+                        icon: model.showsClearedPublished ? "eye.slash" : "tray"
+                    ) {
+                        model.showsClearedPublished.toggle()
+                    }
+                    .help(model.showsClearedPublished ? "Hide the pieces cleared from the board" : "Show the pieces cleared from the board")
+                }
+                Spacer(minLength: 0)
+            }
+            .animation(ProMotionSprings.snappy, value: model.showsClearedPublished)
+        }
+    }
+
     private func actions(for item: PipelineContentItem) -> PipelineCardActions {
         PipelineCardActions(
             open: { onOpen(item) },
@@ -271,7 +468,9 @@ struct PipelineColumnView: View {
             export: { Task { model.pendingExport = try? await AtomRepository.shared.fetch(uuid: item.id) } },
             logPerformance: { Task { model.pendingPerf = try? await AtomRepository.shared.fetch(uuid: item.id) } },
             archive: { model.archive([item.id]) },
-            restore: { model.restore(item.id) }
+            restore: { model.restore(item.id) },
+            clearFromBoard: { model.clearFromBoard([item.id]) },
+            returnToBoard: { model.returnToBoard([item.id]) }
         )
     }
 }
@@ -285,6 +484,7 @@ struct PipelineCollapsedColumn: View {
 
     let column: PipelineBoardSnapshot.Column
     let model: PipelinePageModel
+    var fillsHeight = false
 
     @State private var isTargeted = false
     @State private var isHovered = false
@@ -296,35 +496,7 @@ struct PipelineCollapsedColumn: View {
         Button {
             withAnimation(ProMotionSprings.snappy) { model.toggleCollapsed(column) }
         } label: {
-            VStack(spacing: DS.space8) {
-                Circle()
-                    .fill(column.tint)
-                    .frame(width: 7, height: 7)
-                Text("\(count)")
-                    .font(DS.caption2.weight(.medium))
-                    .monospacedDigit()
-                    .foregroundStyle(DS.textMuted)
-                    .contentTransition(.numericText())
-                Text(column.title.uppercased())
-                    .font(DS.smallCaps)
-                    .tracking(DS.smallCapsTracking)
-                    .foregroundStyle(DS.giltInk)
-                    .fixedSize()
-                    .rotationEffect(.degrees(-90))
-                    .frame(width: 14, height: 112)
-                Spacer(minLength: 0)
-            }
-            .padding(.top, DS.space12)
-            .frame(width: Self.width, height: 220)
-            .background(
-                isTargeted ? dropTint.opacity(0.10) : (isHovered ? DS.glassSectionFill : DS.glassSectionFill.opacity(0.6)),
-                in: .rect(cornerRadius: 12)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(isTargeted ? dropTint.opacity(0.45) : DS.commandChromeBorder, lineWidth: isTargeted ? 1 : 0.5)
-            )
-            .contentShape(.rect(cornerRadius: 12))
+            rail
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
@@ -338,21 +510,59 @@ struct PipelineCollapsedColumn: View {
             return handled
         } isTargeted: { isTargeted = $0 }
     }
+
+    private var rail: some View {
+        VStack(spacing: DS.space8) {
+            Circle()
+                .fill(column.tint)
+                .frame(width: 7, height: 7)
+            Text("\(count)")
+                .font(DS.caption2.weight(.medium))
+                .monospacedDigit()
+                .foregroundStyle(DS.textMuted)
+                .contentTransition(.numericText())
+            Text(column.title.uppercased())
+                .font(DS.smallCaps)
+                .tracking(DS.smallCapsTracking)
+                .foregroundStyle(DS.giltInk)
+                .fixedSize()
+                .rotationEffect(.degrees(-90))
+                .frame(width: 14, height: 112)
+            Spacer(minLength: 0)
+        }
+        .padding(.top, DS.space12)
+        .frame(width: Self.width)
+        .frame(height: fillsHeight ? nil : 220)
+        .frame(maxHeight: fillsHeight ? .infinity : nil)
+        .background(
+            isTargeted ? dropTint.opacity(0.10) : (isHovered ? DS.glassSectionFill : DS.glassSectionFill.opacity(0.6)),
+            in: .rect(cornerRadius: 12)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(isTargeted ? dropTint.opacity(0.45) : DS.commandChromeBorder, lineWidth: isTargeted ? 1 : 0.5)
+        )
+        .contentShape(.rect(cornerRadius: 12))
+    }
 }
 
-// MARK: - New row
+// MARK: - Foot row
 
-struct PipelineNewRow: View {
+/// The quiet row at the foot of a column: a glyph and a word, ink on hover.
+/// "New" in working columns; the hidden counts under Published.
+struct PipelineFootRow: View {
     let title: String
+    var icon = "plus"
     let action: () -> Void
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: "plus")
+            Label(title, systemImage: icon)
                 .font(DS.caption.weight(.medium))
+                .monospacedDigit()
                 .foregroundStyle(isHovered ? DS.text : DS.textMuted)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(1)
                 .padding(.horizontal, DS.space8)
                 .padding(.vertical, DS.space6)
                 .background(isHovered ? DS.glassSectionFill : Color.clear, in: .rect(cornerRadius: 8))
@@ -361,7 +571,7 @@ struct PipelineNewRow: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .animation(ProMotionSprings.hover, value: isHovered)
-        .accessibilityLabel("\(title) piece")
+        .accessibilityLabel(title)
     }
 }
 
@@ -384,7 +594,7 @@ extension PipelineBoardSnapshot.Column {
         case .inProgress: return "Begin writing from an idea, or drag a piece in."
         case .review: return "Move work here when it needs feedback."
         case .ready: return "Finished pieces ready for publication."
-        case .shipped: return "Published work from the last 30 days appears here."
+        case .shipped: return "Published work from the window above appears here."
         }
     }
 }

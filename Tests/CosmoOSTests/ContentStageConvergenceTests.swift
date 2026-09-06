@@ -120,6 +120,61 @@ final class ContentStageConvergenceTests: XCTestCase {
         XCTAssertEqual(ContentPipelineService.xpForTransition(from: .draft, to: .polish, previouslyEntered: [.polish]), 0)
     }
 
+    // MARK: - Clearing the board (Published)
+
+    func testClearingFromBoardIsKeyMergedAndReversible() async throws {
+        let atom = try await makeContent(phase: .published, extra: [
+            "hooks": ["a"],
+            "publishRecords": [["platform": "instagram", "publishedAt": "2030-01-01T09:00:00Z"]]
+        ])
+
+        let cleared = try await ContentPipelineService.setClearedFromBoard(contentUUID: atom.uuid, cleared: true)
+        let stamp = try XCTUnwrap(cleared.after.metadataDict?["boardClearedAt"] as? String)
+        let dict = try await reload(atom.uuid).metadataDict
+        XCTAssertEqual(dict?["boardClearedAt"] as? String, stamp)
+        XCTAssertEqual(dict?["hooks"] as? [String], ["a"], "siblings survive")
+        XCTAssertEqual(dict?["clientProfileUUID"] as? String, "client-sibling")
+        XCTAssertEqual(dict?["phase"] as? String, "published", "clearing never changes the phase")
+        XCTAssertEqual(try await phase(atom.uuid), .published)
+
+        // Clearing again keeps the first stamp and writes nothing.
+        let again = try await ContentPipelineService.setClearedFromBoard(contentUUID: atom.uuid, cleared: true)
+        XCTAssertEqual(again.before.localVersion, again.after.localVersion, "a no-op must not bump the version")
+        XCTAssertEqual(again.after.metadataDict?["boardClearedAt"] as? String, stamp)
+
+        let returned = try await ContentPipelineService.setClearedFromBoard(contentUUID: atom.uuid, cleared: false)
+        XCTAssertNil(returned.after.metadataDict?["boardClearedAt"])
+        let back = try await reload(atom.uuid).metadataDict
+        XCTAssertNil(back?["boardClearedAt"])
+        XCTAssertEqual(back?["hooks"] as? [String], ["a"])
+        XCTAssertEqual(try await phase(atom.uuid), .published)
+    }
+
+    func testAStageMoveReturnsAClearedPieceToTheBoard() async throws {
+        let atom = try await makeContent(phase: .published, extra: ["boardClearedAt": "2030-01-01T09:00:00Z"])
+        _ = try await ContentPipelineService.applyProductionStage(contentUUID: atom.uuid, to: .review)
+        let dict = try await reload(atom.uuid).metadataDict
+        XCTAssertNil(dict?["boardClearedAt"], "a deliberate move is activity — the piece is back on the board")
+        XCTAssertEqual(dict?["productionStage"] as? String, "review")
+        XCTAssertEqual(dict?["clientProfileUUID"] as? String, "client-sibling")
+    }
+
+    func testANewPublicationReturnsAClearedPieceButAPreservedReMarkDoesNot() async throws {
+        let atom = try await makeContent(phase: .published, extra: [
+            "boardClearedAt": "2030-01-01T09:00:00Z",
+            "publishRecords": [["platform": "instagram", "publishedAt": "2030-01-01T09:00:00Z"]]
+        ])
+        // A performance import re-marks the same platform and keeps its date: not new activity.
+        await ContentPublishStore.markPublished(atomUuid: atom.uuid, platform: "instagram", preservingExistingDate: true)
+        XCTAssertNotNil(try await reload(atom.uuid).metadataDict?["boardClearedAt"], "a preserved re-mark leaves the board alone")
+
+        // A new platform is a new publication: back on the board.
+        await ContentPublishStore.markPublished(atomUuid: atom.uuid, platform: "linkedin")
+        let dict = try await reload(atom.uuid).metadataDict
+        XCTAssertNil(dict?["boardClearedAt"])
+        XCTAssertEqual((dict?["publishRecords"] as? [[String: Any]])?.count, 2, "the instagram record is kept beside the new one")
+    }
+
     // MARK: - Schedule writer converges
 
     func testPlanningPublicationPreservesPolishActivity() async throws {

@@ -155,6 +155,7 @@ private struct SwipeStudyFrameImage: View {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
+                    .imageSaveAffordance(ImageSaveRequest(.attachment(attachment)))
             } else {
                 ProgressView()
                     .controlSize(.small)

@@ -37,6 +37,9 @@ enum BlockOperations {
         block.callout = kind == .callout ? (block.callout ?? .default) : nil
         block.toggleCollapsed = kind == .toggle ? (block.toggleCollapsed ?? false) : nil
         block.section = kind == .section ? (block.section ?? .default) : nil
+        // A nesting level only means something on a list; list ↔ list keeps
+        // it (bullet → to-do stays nested), anything else lands at the margin.
+        if !kind.supportsListIndent { block.indent = nil }
         // Transforming a toggle or section into a kind that renders no
         // children must not strand them on the block — hoist them out as
         // siblings directly below. Toggle ↔ section keeps the body intact.
@@ -149,11 +152,14 @@ enum BlockOperations {
             )
         }
 
+        // A split list item continues at the same nesting level — Return
+        // inside a nested bullet stays nested (Docs / Notion).
         let after = RichBlock(
             kind: original.kind.splitContinuationKind,
             inlines: [.text(String(text[splitIndex...]))],
             checked: original.kind == .checklist ? false : nil,
-            callout: original.kind == .callout ? nil : original.callout
+            callout: original.kind == .callout ? nil : original.callout,
+            indent: original.kind.splitContinuationKind.supportsListIndent ? original.indent : nil
         )
 
         try replaceBlock(before, in: &document, at: path)
@@ -344,7 +350,26 @@ enum BlockOperations {
         return blocks
     }
 
-    private static func pasteBlock(fromLine line: String) -> RichBlock {
+    private static func pasteBlock(fromLine rawLine: String) -> RichBlock {
+        // Leading spaces / tabs before a list marker are markdown nesting:
+        // two spaces (or one tab) per level, capped at the grammar's depth.
+        var leadingUnits = 0
+        var scanned = rawLine.startIndex
+        while scanned < rawLine.endIndex {
+            if rawLine[scanned] == " " { leadingUnits += 1 } else if rawLine[scanned] == "\t" { leadingUnits += 2 } else { break }
+            scanned = rawLine.index(after: scanned)
+        }
+        let stripped = String(rawLine[scanned...])
+        let nestedLevel = RichListIndent.clamped(leadingUnits / 2)
+        if leadingUnits > 0, nestedLevel > 0 {
+            let nested = pasteBlock(fromLine: stripped)
+            if nested.kind.supportsListIndent {
+                var block = nested
+                block.indent = nestedLevel
+                return block
+            }
+        }
+        let line = rawLine
         if line.hasPrefix("- [ ] ") {
             return RichBlock(kind: .checklist, inlines: [.text(String(line.dropFirst(6)))], checked: false)
         }
@@ -434,6 +459,13 @@ enum BlockOperations {
             throw BlockOperationError.unsupportedBlockKind(block.kind)
         }
 
+        // Return on an empty NESTED item climbs one level before it ever
+        // leaves the list (the Google Docs rhythm): each press walks the
+        // item back toward the margin, and only the margin press exits.
+        if block.listIndentLevel > 0 {
+            return try indentListBlock(in: document, at: path, deeper: false)
+        }
+
         // An abandoned empty toggle hands its children back to the page.
         let hoistedChildren = block.kind == .toggle ? block.children : []
         if block.kind == .toggle { block.children = [] }
@@ -449,6 +481,66 @@ enum BlockOperations {
             }
         }
         return BlockOperationResult(document: document, focusPath: path, caretUTF16Offset: 0)
+    }
+
+    /// Tab / ⇧Tab on a list item: move the item AND its subtree (the
+    /// contiguous deeper items below it) one level deeper or shallower.
+    /// Deeper is capped one past the list item directly above (a nested
+    /// item needs something to nest under — `RichListIndent.maxIndentLevel`)
+    /// and at `RichListIndent.maxLevel`; shallower stops at the margin.
+    /// Throws when the block isn't a list item; returns the document
+    /// unchanged (same focus) when the cap blocks the move, so the caller
+    /// can tell "handled, nothing to do" from "not ours".
+    static func indentListBlock(
+        in document: RichDocument,
+        at path: BlockPath,
+        deeper: Bool
+    ) throws -> BlockOperationResult {
+        let block = try block(in: document, at: path)
+        guard block.kind.supportsListIndent else {
+            throw BlockOperationError.unsupportedBlockKind(block.kind)
+        }
+        var document = document
+        try mutateChildren(in: &document.blocks, indices: path.indices) { siblings, index in
+            let current = siblings[index].listIndentLevel
+            let target: Int
+            if deeper {
+                target = min(current + 1, RichListIndent.maxIndentLevel(in: siblings, at: index))
+            } else {
+                target = max(0, current - 1)
+            }
+            guard target != current else { return }
+            let delta = target - current
+            for offset in RichListIndent.subtreeRange(in: siblings, at: index) {
+                let level = RichListIndent.clamped(siblings[offset].listIndentLevel + delta)
+                siblings[offset].indent = level > 0 ? level : nil
+            }
+        }
+        return BlockOperationResult(document: document, focusPath: path)
+    }
+
+    /// Handle-menu Indent / Outdent over a block selection: every selected
+    /// ROOT list item moves one level on its own (the user chose the exact
+    /// blocks, so no subtree follows). Top-down, so a deeper move sees the
+    /// already-moved item above it. nil when nothing could move.
+    static func indentBlocks(
+        withIDs ids: Set<UUID>,
+        in document: RichDocument,
+        deeper: Bool
+    ) -> BlockOperationResult? {
+        var blocks = document.blocks
+        var moved = false
+        for index in blocks.indices where ids.contains(blocks[index].id) && blocks[index].kind.supportsListIndent {
+            let current = blocks[index].listIndentLevel
+            let target = deeper
+                ? min(current + 1, RichListIndent.maxIndentLevel(in: blocks, at: index))
+                : max(0, current - 1)
+            guard target != current else { continue }
+            blocks[index].indent = target > 0 ? target : nil
+            moved = true
+        }
+        guard moved else { return nil }
+        return BlockOperationResult(document: RichDocument(blocks: blocks))
     }
 
     /// Return on the empty trailing line of a code block — the block gives
@@ -1123,10 +1215,12 @@ extension BlockOperations {
     /// containers recurse into their children.
     static func markdownLines(for blocks: [RichBlock]) -> [String] {
         var lines: [String] = []
-        var numberedIndex = 0
-        for block in blocks {
-            numberedIndex = block.kind == .numberedList ? numberedIndex + 1 : 0
-            lines.append(markdownLine(for: block, numberedIndex: max(1, numberedIndex)))
+        let ordinals = RichListIndent.numberedOrdinals(for: blocks)
+        for (index, block) in blocks.enumerated() {
+            // Nested items indent two spaces per level — the markdown every
+            // editor reads back as nesting.
+            let nesting = String(repeating: "  ", count: block.listIndentLevel)
+            lines.append(nesting + markdownLine(for: block, numberedIndex: ordinals[index] + 1))
             // Visibility is presentation state. Copy includes the complete
             // selected object, including nested and folded content.
             lines.append(contentsOf: markdownLines(for: block.children))
@@ -1215,14 +1309,16 @@ extension RichBlockKind {
     func renderedPrefixLength(in text: String) -> Int {
         switch self {
         case .bulletList:
-            return text.hasPrefix("• ") ? 2 : 0
+            // Any level's glyph (• ◦ ▪) — the row knows it's a bullet.
+            return RichListIndent.bulletPrefixLength(in: text)
         case .quote:
             return text.hasPrefix("│ ") ? 2 : 0
         case .checklist:
             return (text.hasPrefix("☐ ") || text.hasPrefix("☑ ")) ? 2 : 0
         case .numberedList:
-            guard let match = text.range(of: #"^[0-9]+\. "#, options: .regularExpression) else { return 0 }
-            return text.utf16.distance(from: text.utf16.startIndex, to: match.upperBound)
+            // Digits, letters or roman — the row knows it's numbered, so a
+            // letter label can't be mistaken for prose here.
+            return RichListIndent.numberedPrefixLength(in: text, allowsAlpha: true)
         default:
             return 0
         }

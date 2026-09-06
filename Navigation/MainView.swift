@@ -232,10 +232,10 @@ struct MainView: View {
     @State private var commandKNavigationTask: Task<Void, Never>?
     @State private var commandKNavigationRequestID = UUID()
 
-    // Creator database overlay
-    @State private var showCreatorDatabase = false
-    @State private var showCreatorProfile = false
-    @State private var creatorProfileAtom: Atom?
+    // Creators live in Explore ▸ Creators; a request opens one there. The
+    // directory model is owned here so revisits keep their data.
+    @State private var creatorDirectoryModel = CreatorDirectoryModel()
+    @State private var creatorOpenRequest: String?
     @State private var showSettings = false
 
     // Track last-used thinkspace for T-key shortcut
@@ -412,73 +412,6 @@ struct MainView: View {
             GeminiThinkingOverlay()
                 .zIndex(280)
 
-            // Creator Database overlay
-            if showCreatorDatabase {
-                ZStack {
-                    FloatingOverlayBackdrop {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                            showCreatorDatabase = false
-                        }
-                    }
-
-                    CreatorListView(
-                        onSelectCreator: { creatorAtom in
-                            creatorProfileAtom = creatorAtom
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                                showCreatorProfile = true
-                            }
-                        },
-                        onCompare: { _ in },
-                        onClose: {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                                showCreatorDatabase = false
-                            }
-                        }
-                    )
-                    .frame(maxWidth: 960, maxHeight: 700)
-                    .floatingOverlayPanel()
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                .zIndex(285)
-            }
-
-            // Creator Profile overlay
-            if showCreatorProfile, let profileAtom = creatorProfileAtom {
-                ZStack {
-                    FloatingOverlayBackdrop {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                            showCreatorProfile = false
-                            creatorProfileAtom = nil
-                        }
-                    }
-
-                    CreatorProfileView(
-                        creatorAtom: profileAtom,
-                        onClose: {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                                showCreatorProfile = false
-                                creatorProfileAtom = nil
-                            }
-                        },
-                        onCompare: { _ in },
-                        onOpenSwipe: { entityId in
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                                showCreatorProfile = false
-                                showCreatorDatabase = false
-                                creatorProfileAtom = nil
-                            }
-                            FocusNavigationCoordinator.shared.open(
-                                entity: EntitySelection(id: entityId, type: .research)
-                            )
-                        }
-                    )
-                    .frame(maxWidth: 1000, maxHeight: 750)
-                    .floatingOverlayPanel()
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                .zIndex(286)
-            }
-
             // Settings floating overlay
             if showSettings {
                 settingsOverlay
@@ -642,8 +575,6 @@ struct MainView: View {
             }
             recordTrailArrival(for: newDest)
         }
-        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showCreatorDatabase)
-        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showCreatorProfile)
         .onAppear {
             FocusNavigationCoordinator.shared.appState = appState
             FocusNavigationCoordinator.shared.pageFocusPresentation = pageFocusPresentation
@@ -675,7 +606,6 @@ struct MainView: View {
             showSettings: $showSettings,
             showWorkbenchComposer: $showWorkbenchComposer,
             spokesPillar: $spokesPillar,
-            showCreatorDatabase: $showCreatorDatabase,
             actions: notificationRouterActions
         )
     }
@@ -707,6 +637,7 @@ struct MainView: View {
                 }
             },
             switchToThinkspace: handleSwitchToThinkspace(atomID:),
+            openCreatorDirectory: { currentDestination = .discover(section: .creators) },
             openCreatorProfile: handleOpenCreatorProfile(creatorUUID:)
         )
     }
@@ -1463,7 +1394,8 @@ struct MainView: View {
             } else if case .discover(let section) = currentDestination {
                 Group {
                     if section == .creators {
-                        SwipeCreatorsPage(model: swipeDiscoverModel)
+                        SwipeCreatorsPage(model: creatorDirectoryModel, discover: swipeDiscoverModel,
+                                          openRequest: $creatorOpenRequest)
                     } else {
                         SwipeDiscoverPage(model: swipeDiscoverModel) {
                             currentDestination = .discover(section: .creators)
@@ -1972,17 +1904,19 @@ struct MainView: View {
         }
     }
 
-    /// Creator profile open by UUID — same cancel-and-stale-guard recipe.
+    /// Creator profile open by UUID — same cancel-and-stale-guard recipe. The
+    /// creator lives in Explore ▸ Creators; a stale request must not yank the
+    /// destination after the user has moved on.
     private func handleOpenCreatorProfile(creatorUUID: String) {
         creatorProfileLoadTask?.cancel()
         let requestID = UUID()
         creatorProfileLoadRequestID = requestID
         creatorProfileLoadTask = Task { @MainActor in
-            if let atom = try? await AtomRepository.shared.fetch(uuid: creatorUUID) {
+            if let atom = try? await AtomRepository.shared.fetch(uuid: creatorUUID), atom.type == .creator {
                 guard creatorProfileLoadRequestID == requestID, !Task.isCancelled else { return }
-                creatorProfileAtom = atom
+                creatorOpenRequest = atom.uuid
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                    showCreatorProfile = true
+                    currentDestination = .discover(section: .creators)
                 }
             }
         }
@@ -2147,23 +2081,6 @@ struct MainView: View {
                 if SwipeFileEngine.shared.showInstagramModal {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                         SwipeFileEngine.shared.cancelInstagramSave()
-                    }
-                    return nil
-                }
-
-                // 2. Creator Profile
-                if showCreatorProfile {
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                        showCreatorProfile = false
-                        creatorProfileAtom = nil
-                    }
-                    return nil
-                }
-
-                // 4. Creator Database
-                if showCreatorDatabase {
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                        showCreatorDatabase = false
                     }
                     return nil
                 }

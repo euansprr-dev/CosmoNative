@@ -56,6 +56,9 @@ struct ResizableImageBlockView: View {
             .overlay { selectionFrame }
             .overlay { handles }
             .overlay(alignment: .top) { sizeBadge }
+            // Save pill rides the same hover as the handles; inset 14 keeps it
+            // clear of the bottom-trailing handle's hot zone.
+            .imageSaveAffordance(saveRequest, isHovered: showChrome, inset: 14)
             .contentShape(.rect(cornerRadius: 10, style: .continuous))
             .onHover { hovering in
                 withAnimation(reduceMotion ? nil : ProMotionSprings.hover) { isHovering = hovering }
@@ -127,8 +130,12 @@ struct ResizableImageBlockView: View {
         }
     }
 
+    private var saveRequest: ImageSaveRequest { ImageSaveRequest(.reference(image)) }
+
     @ViewBuilder
     private var presetMenu: some View {
+        ImageSaveMenuItems(request: saveRequest)
+        Divider()
         Button("Small") { commit(width: intrinsic.width * 0.25) }
         Button("Medium") { commit(width: intrinsic.width * 0.5) }
         Button("Original size") { commit(width: intrinsic.width) }

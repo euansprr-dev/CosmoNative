@@ -10,7 +10,9 @@ struct AtomWindowRootView: View {
 
     var body: some View {
         atomContent
-        .environment(\.cosmoFloatingPanelIsVisible, viewModel.isPresented)
+        // The open item pauses its editing session while the switcher covers
+        // it, exactly as it does while the window is ordered out.
+        .environment(\.cosmoFloatingPanelIsVisible, viewModel.isPresented && !viewModel.isSwitcherVisible)
         .background(atomWindowBackdrop)
         .clipShape(.rect(cornerRadius: AtomWindowMetrics.panelCornerRadius))
         .overlay(
@@ -28,34 +30,40 @@ struct AtomWindowRootView: View {
 
     @ViewBuilder
     private var atomContent: some View {
+        let switcherVisible = viewModel.isSwitcherVisible
         ZStack {
             if let atom = viewModel.currentAtom {
+                // The item stays mounted under the switcher — its scroll,
+                // undo history and hydrated editors are exactly where they
+                // were when Back is undone.
                 atomFocusView(atom: atom)
                     .id(atom.uuid)
                     .environment(\.atomWindowChromeContext, chromePayload(for: atom))
+                    .opacity(switcherVisible ? 0 : 1)
+                    .allowsHitTesting(!switcherVisible)
+                    .accessibilityHidden(switcherVisible)
+                    .animation(ProMotionSprings.gentle, value: switcherVisible)
             } else if viewModel.isLoading {
-                emptyShell {
-                    loadingView
-                }
-            } else {
-                emptyShell {
-                    emptyStateView
-                }
+                loadingShell
             }
 
-            if viewModel.isSearchVisible {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .opacity(0.22)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(ProMotionSprings.snappy) {
-                            viewModel.isSearchVisible = false
-                        }
-                    }
-
-                AtomSearchOverlay(viewModel: viewModel)
-                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            if switcherVisible {
+                AtomSwitcherView(
+                    model: viewModel.switcher,
+                    chrome: viewModel.currentAtom.map(chromePayload(for:)) ?? emptyChromePayload,
+                    onOpen: { viewModel.open($0) },
+                    onOpenInMainWindow: { viewModel.openInMainWindow($0) },
+                    onTogglePin: { viewModel.togglePin($0) },
+                    onCreateFromQuery: { title in
+                        Task { await viewModel.createNewAtom(type: .note, title: title) }
+                    },
+                    onReturnToOpenItem: { viewModel.dismissSwitcher() },
+                    onEscape: { viewModel.escapeSwitcher() }
+                )
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .offset(y: 10)),
+                    removal: .opacity
+                ))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -94,7 +102,8 @@ struct AtomWindowRootView: View {
         case .content:
             ContentFocusModeView(atom: atom, onClose: handleClose)
         case .note:
-            UnifiedPageView(atom: atom, onClose: handleClose)
+            // Back leads to the switcher; Esc still dismisses the window.
+            UnifiedPageView(atom: atom, onClose: handleClose, onBack: handleBack)
         case .cosmoAI:
             CosmoAIFocusModeView(atom: atom, onClose: handleClose)
         case .extract:
@@ -106,6 +115,10 @@ struct AtomWindowRootView: View {
 
     private func handleClose() {
         AtomWindowPanelController.shared.hide()
+    }
+
+    private func handleBack() {
+        viewModel.showSwitcher()
     }
 
     private func chromePayload(for atom: Atom) -> AtomWindowChromePayload {
@@ -153,7 +166,7 @@ struct AtomWindowRootView: View {
                 viewModel.toggleBookmark()
             },
             showSearch: {
-                viewModel.isSearchVisible.toggle()
+                viewModel.toggleSwitcher()
             },
             createAtom: { type in
                 Task { await viewModel.createNewAtom(type: type) }
@@ -164,122 +177,25 @@ struct AtomWindowRootView: View {
         )
     }
 
-    private func emptyShell<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    // MARK: - Loading
+
+    private var loadingShell: some View {
         VStack(spacing: 0) {
             AtomWindowStandaloneChrome(context: emptyChromePayload)
                 .padding(.horizontal, DS.space16)
                 .padding(.top, DS.space12)
                 .padding(.bottom, DS.space8)
 
-            content()
-        }
-    }
-
-    // MARK: - Empty State
-
-    private var emptyStateView: some View {
-        VStack(spacing: DS.space24) {
-            Spacer()
-            emptyStateHeader
-            recentAtomsList
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(DS.bg)
-    }
-
-    private var emptyStateHeader: some View {
-        VStack(spacing: DS.space8) {
-            Image(systemName: "atom")
-                .font(.system(size: 36, weight: .light))
-                .foregroundStyle(DS.textMuted)
-                .accessibilityHidden(true)
-
-            Text("Open any atom")
-                .font(DS.title2)
-                .foregroundStyle(DS.text)
-
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.isSearchVisible = true
-                }
-            } label: {
-                HStack(spacing: DS.space6) {
-                    Image(systemName: "magnifyingglass")
-                        .font(DS.caption.weight(.semibold))
-                        .accessibilityHidden(true)
-                    Text("Search atoms")
-                        .font(DS.buttonText.weight(.semibold))
-                }
-                .foregroundStyle(DS.accent)
-                .padding(.horizontal, DS.space12)
-                .padding(.vertical, DS.space6)
-                .background(DS.accentSoft, in: Capsule())
-                .contentShape(Capsule())
+            VStack(spacing: DS.space12) {
+                ProgressView()
+                    .scaleEffect(0.8)
+                Text("Loading…")
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textSecondary)
             }
-            .buttonStyle(.plain)
-            .help("Search atoms")
-            .padding(.top, DS.space4)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(DS.bg)
         }
-    }
-
-    private var recentAtomsList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if !viewModel.recentAtoms.isEmpty {
-                Text("Recent")
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
-                    .padding(.horizontal, DS.space16)
-                    .padding(.bottom, DS.space4)
-
-                ForEach(viewModel.recentAtoms.prefix(6)) { atom in
-                    recentAtomRow(atom: atom)
-                }
-            }
-        }
-        .frame(maxWidth: 400)
-    }
-
-    private func recentAtomRow(atom: Atom) -> some View {
-        Button {
-            Task { await viewModel.navigate(to: atom.uuid) }
-        } label: {
-            HStack(spacing: DS.space10) {
-                Image(cosmo: atom.cosmoIcon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(AtomWindowViewModel.entityColor(for: atom.type))
-                    .frame(width: 24, height: 24)
-
-                Text(atom.title ?? "Untitled")
-                    .font(DS.body)
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-
-                Spacer(minLength: 0)
-
-                Text(atom.type.displayName)
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-            }
-            .padding(.horizontal, DS.space16)
-            .padding(.vertical, DS.space8)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Loading
-
-    private var loadingView: some View {
-        VStack(spacing: DS.space12) {
-            ProgressView()
-                .scaleEffect(0.8)
-            Text("Loading…")
-                .font(DS.callout)
-                .foregroundStyle(DS.textSecondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(DS.bg)
     }
 }
 

@@ -39,7 +39,8 @@ final class PipelineBoardSnapshotTests: XCTestCase {
         scheduledAt: String? = nil,
         publishedAt: String? = nil,
         phaseEnteredAt: String? = nil,
-        updatedAt: String = "2030-05-01T09:00:00Z"
+        updatedAt: String = "2030-05-01T09:00:00Z",
+        boardClearedAt: String? = nil
     ) -> PipelineContentItem {
         var atom = Atom.new(type: .content, title: title ?? "Piece \(uuid)", body: nil)
         atom.uuid = uuid
@@ -58,7 +59,8 @@ final class PipelineBoardSnapshotTests: XCTestCase {
             wordCount: wordCount,
             updatedAt: date(updatedAt),
             phaseEnteredAt: phaseEnteredAt.map(date),
-            editorialStage: stage
+            editorialStage: stage,
+            boardClearedAt: boardClearedAt.map(date)
         )
     }
 
@@ -67,12 +69,14 @@ final class PipelineBoardSnapshotTests: XCTestCase {
         sessionDaysByContent: [String: Date] = [:],
         perf: [String: ContentPerfSnapshot] = [:],
         filters: PipelineFilters = PipelineFilters(),
-        shippedWindowDays: Int = 30
+        shippedWindowDays: Int? = 30,
+        showsCleared: Bool = false
     ) -> PipelineBoardSnapshot {
         PipelineBoardSnapshot.build(
             content: content, sessionDaysByContent: sessionDaysByContent,
             perf: perf, filters: filters,
-            shippedWindowDays: shippedWindowDays, today: today, calendar: utc
+            shippedWindowDays: shippedWindowDays, showsCleared: showsCleared,
+            today: today, calendar: utc
         )
     }
 
@@ -155,6 +159,79 @@ final class PipelineBoardSnapshotTests: XCTestCase {
 
         let wide = build([content("stale", phase: .published, publishedAt: "2030-04-09T23:59:00Z")], shippedWindowDays: 90)
         XCTAssertEqual(ids(wide, .shipped), ["stale"])
+    }
+
+    // MARK: - Published shelf (window + clearing)
+
+    func testClearedShippedPiecesLeaveThePublishedColumnUntilShown() {
+        let rows = [
+            content("shown", phase: .published, publishedAt: "2030-05-08T09:00:00Z"),
+            content("cleared", phase: .published, publishedAt: "2030-05-09T09:00:00Z", boardClearedAt: "2030-05-09T10:00:00Z"),
+        ]
+        let snapshot = build(rows)
+        XCTAssertEqual(ids(snapshot, .shipped), ["shown"])
+        XCTAssertEqual(snapshot.count(in: .shipped), 1)
+        XCTAssertEqual(snapshot.clearedShippedCount, 1)
+        XCTAssertEqual(snapshot.olderShippedCount, 0)
+
+        let shown = build(rows, showsCleared: true)
+        XCTAssertEqual(ids(shown, .shipped), ["cleared", "shown"], "a shown cleared piece takes its place in publish order")
+        XCTAssertEqual(shown.count(in: .shipped), 2)
+        XCTAssertEqual(shown.clearedShippedCount, 1, "the count names what is cleared, shown or not")
+        XCTAssertEqual(shown.cursorOrder[4], shown.cards(in: .shipped).map(\.id), "the cursor walks shown cleared pieces too")
+    }
+
+    func testWindowCountsOlderPublishesAndAllTimeKeepsThem() {
+        let rows = [
+            content("fresh", phase: .published, publishedAt: "2030-05-01T09:00:00Z"),
+            content("old", phase: .published, publishedAt: "2030-01-01T09:00:00Z"),
+            content("oldCleared", phase: .published, publishedAt: "2030-01-02T09:00:00Z", boardClearedAt: "2030-05-01T10:00:00Z"),
+        ]
+        let month = build(rows)
+        XCTAssertEqual(ids(month, .shipped), ["fresh"])
+        XCTAssertEqual(month.olderShippedCount, 1, "a cleared piece is cleared, never merely older")
+        XCTAssertEqual(month.clearedShippedCount, 1)
+
+        let allTime = build(rows, shippedWindowDays: nil)
+        XCTAssertEqual(ids(allTime, .shipped), ["fresh", "old"])
+        XCTAssertEqual(allTime.olderShippedCount, 0)
+        XCTAssertEqual(allTime.clearedShippedCount, 1)
+
+        let allShown = build(rows, shippedWindowDays: nil, showsCleared: true)
+        XCTAssertEqual(ids(allShown, .shipped), ["fresh", "oldCleared", "old"])
+    }
+
+    func testHiddenCountsSpeakForTheFilteredBoardOnly() {
+        let rows = [
+            content("ig", phase: .published, platform: .instagram, publishedAt: "2030-05-08T09:00:00Z", boardClearedAt: "2030-05-09T10:00:00Z"),
+            content("igOld", phase: .published, platform: .instagram, publishedAt: "2030-01-08T09:00:00Z"),
+            content("li", phase: .published, platform: .linkedin, publishedAt: "2030-05-08T09:00:00Z"),
+        ]
+        let everything = build(rows)
+        XCTAssertEqual(everything.clearedShippedCount, 1)
+        XCTAssertEqual(everything.olderShippedCount, 1)
+
+        let linkedin = build(rows, filters: PipelineFilters(platform: .linkedin))
+        XCTAssertEqual(ids(linkedin, .shipped), ["li"])
+        XCTAssertEqual(linkedin.clearedShippedCount, 0, "a filtered-out piece is neither cleared nor older here")
+        XCTAssertEqual(linkedin.olderShippedCount, 0)
+    }
+
+    func testClientNamesShowOnlyWhenTheBoardMixesOwners() {
+        XCTAssertFalse(build([]).showsClientNames)
+        XCTAssertFalse(build([
+            content("a", phase: .draft, client: "josh"), content("b", phase: .draft, client: "josh")
+        ]).showsClientNames, "one client would repeat one name on every card")
+        XCTAssertTrue(build([
+            content("a", phase: .draft, client: "josh"), content("b", phase: .draft)
+        ]).showsClientNames, "a personal piece beside a client's is a mix")
+        XCTAssertTrue(build([
+            content("a", phase: .draft, client: "josh"), content("b", phase: .published, client: "ben", publishedAt: "2030-05-08T09:00:00Z")
+        ]).showsClientNames, "owners are counted across every column")
+        XCTAssertFalse(build([
+            content("a", phase: .draft, client: "josh"),
+            content("hidden", phase: .published, client: "ben", publishedAt: "2030-05-08T09:00:00Z", boardClearedAt: "2030-05-09T10:00:00Z")
+        ]).showsClientNames, "only what is on the board counts")
     }
 
     // MARK: - Ordering

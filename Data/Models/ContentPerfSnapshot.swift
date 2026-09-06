@@ -157,7 +157,13 @@ enum ContentPublishStore {
             url: url?.isEmpty == false ? url : prior?.url,
             publishedAt: publishedAt
         ))
-        let updated = atom.mergingMetadataKeys(Overlay(publishRecords: records, status: "published"))
+        var updated = atom.mergingMetadataKeys(Overlay(publishRecords: records, status: "published"))
+        // A genuinely new publication (a new platform, or a new date) is
+        // activity: it returns a piece cleared from the board. A re-mark that
+        // keeps the existing date (a performance import) changes nothing.
+        if prior == nil || !preservingExistingDate {
+            updated = updated.removingMetadataKeys([ContentPipelineService.boardClearedAtKey])
+        }
         _ = try? await AtomRepository.shared.update(updated)
         // Shipping IS a stage change: land on Published unless the piece has
         // already shipped or been archived (never un-archive, never re-ship —

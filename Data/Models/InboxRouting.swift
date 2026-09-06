@@ -41,6 +41,12 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
     /// The capture is a step in a funnel the user is assembling — it appends
     /// to an existing flow swipe rather than landing loose.
     case addToFlow
+    /// The capture is a SOURCE saved for its CONTENT — a link, video, paper,
+    /// or scanned pages to read and study later. It becomes a Research
+    /// source (the research lens, never the swipe file), landing with a
+    /// Space's materials, linked into a Concept's References, or in the
+    /// Library. September 2026.
+    case fileAsResearch
 
     /// What accepting this suggestion MAKES — the noun the pill and inspector
     /// lead with, so "what it becomes" is never implicit. Spatial kinds name
@@ -78,6 +84,8 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
             return "Swipe file"
         case .addToFlow:
             return "Step in a flow"
+        case .fileAsResearch:
+            return "Research source"
         }
     }
 
@@ -108,6 +116,8 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
             return SwipeKind.post.iconName
         case .addToFlow:
             return SwipeKind.flow.iconName
+        case .fileAsResearch:
+            return "books.vertical"
         }
     }
 
@@ -138,6 +148,8 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
             return "Swipe"
         case .addToFlow:
             return "Add step"
+        case .fileAsResearch:
+            return "Save Research"
         }
     }
 
@@ -171,7 +183,7 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
             return .place
         case .advanceQuestion, .spawnQuestion, .feedConnection, .attachClient,
              .germinateConnection, .germinateDeepDive, .startInquiry, .feedSeedling, .startSeedling,
-             .fileAsSwipe, .addToFlow:
+             .fileAsSwipe, .addToFlow, .fileAsResearch:
             // Actionable destination suggestions — the pill renders like a place.
             return .place
         case .createStandaloneAtom:

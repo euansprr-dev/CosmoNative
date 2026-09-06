@@ -185,6 +185,7 @@ private struct SwipeStudySliceImage: View {
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity)
+                    .imageSaveAffordance(ImageSaveRequest(.attachment(attachment)))
             } else {
                 Rectangle()
                     .fill(DS.glassSectionFill)

@@ -151,7 +151,9 @@ struct PipelineListView: View {
             export: { Task { model.pendingExport = try? await AtomRepository.shared.fetch(uuid: item.id) } },
             logPerformance: { Task { model.pendingPerf = try? await AtomRepository.shared.fetch(uuid: item.id) } },
             archive: { model.archive([item.id]) },
-            restore: { model.restore(item.id) }
+            restore: { model.restore(item.id) },
+            clearFromBoard: { model.clearFromBoard([item.id]) },
+            returnToBoard: { model.returnToBoard([item.id]) }
         )
     }
 }
@@ -285,6 +287,13 @@ private struct PipelineLedgerRow: View {
                     .foregroundStyle(DS.textMuted)
                     .help("Writing session booked")
             }
+            if item.isClearedFromBoard {
+                Image(systemName: "tray")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .help("Cleared from the board — still published here, in Calendar and in search")
+                    .accessibilityLabel("Cleared from the board")
+            }
             Text(item.updatedAt.cosmoCompactAge)
                 .font(DS.caption2)
                 .monospacedDigit()
@@ -317,12 +326,27 @@ private struct PipelineLedgerRow: View {
 // MARK: - Bulk bar (floats over the selection)
 
 struct PipelineBulkBar: View {
+    /// What ⌫ means for this selection: shipped pieces are cleared from the
+    /// board (kept everywhere else); anything else is archived.
+    enum Removal {
+        case clearFromBoard, archive
+
+        var title: String { self == .clearFromBoard ? "Clear from board" : "Archive" }
+        var icon: String { self == .clearFromBoard ? "tray.and.arrow.down" : "archivebox" }
+        var help: String {
+            self == .clearFromBoard
+                ? "Take the selection off the board — stays in List, Calendar and search (⌫)"
+                : "Archive the selection (⌫)"
+        }
+    }
+
     let count: Int
     let clients: [PipelineClient]
+    var removal: Removal = .archive
     let onMove: (ContentProductionStage) -> Void
     let onSchedule: () -> Void
     let onAssign: (String?) -> Void
-    let onArchive: () -> Void
+    let onRemove: () -> Void
     let onClear: () -> Void
 
     var body: some View {
@@ -346,9 +370,10 @@ struct PipelineBulkBar: View {
                 Button("No client") { onAssign(nil) }
             } label: { Label("Assign", systemImage: "person.crop.circle") }
             .menuStyle(.borderlessButton).fixedSize()
-            Button { onArchive() } label: { Label("Archive", systemImage: "archivebox") }
+            Button { onRemove() } label: { Label(removal.title, systemImage: removal.icon) }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.delete, modifiers: [])
+                .help(removal.help)
             Button { onClear() } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain)
                 .help("Clear selection (Esc)")

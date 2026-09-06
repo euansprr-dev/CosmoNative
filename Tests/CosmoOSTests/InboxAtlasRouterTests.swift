@@ -493,6 +493,52 @@ final class InboxAtlasRouterTests: XCTestCase {
         XCTAssertEqual(noTitle?.moves.count, 0)
     }
 
+    func testFileAsResearchKeepsOnlyWorkspaceOrConceptTargets() {
+        // A source may name its room (a workspace) or the page it is a
+        // source for (a concept); any other key means the Library.
+        let toSpace = parse("""
+        {"title":"Sleep debt talk","captureType":"source","moves":[{"kind":"fileAsResearch","targetKey":"thinkspace-TS1",
+        "growth":"Adds a source.","confidence":0.85}]}
+        """)
+        XCTAssertEqual(toSpace?.moves.first?.kind, .fileAsResearch)
+        XCTAssertEqual(toSpace?.moves.first?.targetKey, "thinkspace-TS1")
+
+        let toConcept = parse("""
+        {"title":"T","captureType":"source","moves":[{"kind":"fileAsResearch","targetKey":"connection-X1",
+        "growth":"g","confidence":0.8}]}
+        """)
+        XCTAssertEqual(toConcept?.moves.first?.targetKey, "connection-X1")
+
+        let toLibrary = parse("""
+        {"title":"T","captureType":"source","moves":[{"kind":"fileAsResearch","targetKey":"question-Q1",
+        "growth":"g","confidence":0.8}]}
+        """)
+        XCTAssertEqual(toLibrary?.moves.count, 1)
+        XCTAssertNil(toLibrary?.moves.first?.targetKey)
+    }
+
+    func testResearchKindSaysWhatTheCaptureBecomes() {
+        XCTAssertEqual(InboxRouteKind.fileAsResearch.outcomeNoun(suggestedAtomType: "research"), "Research source")
+        XCTAssertEqual(InboxRouteKind.fileAsResearch.primaryVerbLabel, "Save Research")
+        XCTAssertEqual(InboxRouteKind.fileAsResearch.legacyClassification, .place)
+        // A source to read is research-tinted but NOT an inquiry move.
+        XCTAssertFalse(InboxRouteKind.fileAsResearch.isInquiryKind)
+    }
+
+    func testPromptCarriesTheMeasuredLinkLens() {
+        let prompt = InboxAtlasRouter.buildPrompt(
+            text: "https://youtu.be/E_kVAVk9ioU",
+            heuristicTitle: "YouTube video link",
+            candidates: candidates,
+            corrections: [],
+            lensHint: "Research — Unrecognised source"
+        )
+        XCTAssertTrue(prompt.contains("LINK LENS"))
+        XCTAssertTrue(prompt.contains("Research — Unrecognised source"))
+        let bare = InboxAtlasRouter.buildPrompt(text: "a thought", heuristicTitle: "T", candidates: candidates, corrections: [])
+        XCTAssertFalse(bare.contains("LINK LENS"))
+    }
+
     func testStartInquiryCountsAsTheOneCreationMove() {
         let decision = parse("""
         {"title":"T","captureType":"question","moves":[

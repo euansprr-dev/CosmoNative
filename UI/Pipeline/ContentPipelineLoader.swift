@@ -43,6 +43,10 @@ struct PipelineContentItem: Identifiable, Equatable, Sendable {
     /// to the first rendered thumbnail — the card's cover.
     var attachmentUUIDs: [String] = []
     var coverPath: String? = nil
+    /// When the user cleared this shipped piece from the board. Board-only:
+    /// the ledger, the calendar, ⌘K and the client hub never read it, and a
+    /// stage move or a new publication drops it.
+    var boardClearedAt: Date? = nil
 
     var id: String { atom.uuid }
 
@@ -56,6 +60,8 @@ struct PipelineContentItem: Identifiable, Equatable, Sendable {
     }
 
     var isShipped: Bool { productionStage == .published }
+
+    var isClearedFromBoard: Bool { boardClearedAt != nil }
 
     var title: String {
         atom.title?.isEmpty == false ? atom.title! : "Untitled"
@@ -252,10 +258,12 @@ enum ContentPipelineLoader {
         var scheduledDate: String?
         var status: String?
         var attachmentUUIDs: [String]?
+        var boardClearedAt: String?
 
         private enum CodingKeys: String, CodingKey {
             case phase, phaseBeforeSchedule, clientProfileUUID, platform, contentFormat, productionStage
             case wordCount, sourceIdeaUUID, phaseEnteredAt, scheduledAt, scheduledDate, status, attachmentUUIDs
+            case boardClearedAt
         }
 
         init(from decoder: Decoder) throws {
@@ -275,6 +283,7 @@ enum ContentPipelineLoader {
             scheduledDate = Self.string(c, .scheduledDate)
             status = Self.string(c, .status)
             attachmentUUIDs = try? c.decodeIfPresent([String].self, forKey: .attachmentUUIDs)
+            boardClearedAt = Self.string(c, .boardClearedAt)
         }
 
         private static func string(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> String? {
@@ -317,7 +326,8 @@ enum ContentPipelineLoader {
             updatedAt: ISO8601.date(from: atom.updatedAt) ?? .distantPast,
             phaseEnteredAt: isoDate(lens?.phaseEnteredAt),
             editorialStage: lens?.productionStage,
-            attachmentUUIDs: lens?.attachmentUUIDs ?? []
+            attachmentUUIDs: lens?.attachmentUUIDs ?? [],
+            boardClearedAt: isoDate(lens?.boardClearedAt)
         )
     }
 

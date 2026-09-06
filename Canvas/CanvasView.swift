@@ -781,7 +781,7 @@ struct CanvasView: View {
             },
             delete: {
                 guard let space = currentSpace else { return }
-                Task { await thinkspaceManager.delete(space) }
+                Task { await thinkspaceManager.confirmDelete(space) }
             },
             addAtCamera: { kind in addFromChromeRow(kind) },
             organizeWorkspace: { requestOrganizeWorkspace() },

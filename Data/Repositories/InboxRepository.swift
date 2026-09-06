@@ -453,6 +453,25 @@ class InboxRepository: ObservableObject {
         }
     }
 
+    /// Captures that carry a FOLDER-style suggestion (a Page, Group, Space,
+    /// reference, or merge) the user has not acted on — the candidates a
+    /// newly born concept may claim. Seedling and inquiry suggestions are
+    /// already knowledge-graph homes and are left alone.
+    func fetchFiledSuggestions(limit: Int) async throws -> [InboxItem] {
+        let folderKinds: [String] = [
+            InboxRouteKind.fileToDestination, .placeInThinkspace, .placeInExistingCluster,
+            .createStandaloneAtom, .mergeAtom
+        ].map(\.rawValue)
+        return try await database.asyncRead { db in
+            try InboxItem
+                .filter(Column("status") == InboxItemStatus.classified.rawValue)
+                .filter(folderKinds.contains(Column("primaryRouteKind")))
+                .order(Column("createdAt").desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
     func countUnread() async throws -> Int {
         try await database.asyncRead { db in
             try InboxItem

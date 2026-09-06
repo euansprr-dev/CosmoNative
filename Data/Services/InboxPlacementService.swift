@@ -76,8 +76,10 @@ struct InboxPlacementService: Sendable {
             NotificationCenter.default.post(name: SpaceCompositionService.didChange, object: nil)
             NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
             if receipt.request.destination.kind == .connection {
+                // Staging names the CONCEPT: for evidence the result IS the
+                // concept; for a research source the concept is the destination.
                 NotificationCenter.default.post(name: CosmoNotification.Connection.stagedInsertsChanged, object: nil,
-                    userInfo: ["connectionUUID": receipt.resultAtomUUID])
+                    userInfo: ["connectionUUID": receipt.request.destination.uuid ?? receipt.resultAtomUUID])
             }
         }
         await InboxDestinationAtlas.shared.invalidate()
@@ -126,6 +128,7 @@ struct InboxPlacementService: Sendable {
             let name = atom.title ?? "Untitled Concept"
             result.append(.init(kind: .connection, uuid: atom.uuid, name: name, path: "Concepts › \(name)"))
         }
+        result.append(.libraryResearch)
         result.append(.init(kind: .swipe, name: "Swipe", path: "Swipe"))
         result.append(.init(kind: .today, name: "Today", path: "Today › Tasks"))
         return result
@@ -158,7 +161,9 @@ struct InboxPlacementService: Sendable {
             guard request.action != .childPage else { throw InboxPlacementError.alreadyFiled }
             result = existing
         } else {
-            guard request.action != .swipe || preparedAtom != nil else { throw InboxPlacementError.unsupported }
+            // Swipes and research sources arrive PREPARED (the intake classifies
+            // the link and shapes the atom); the writer never invents one.
+            guard (request.action != .swipe && request.action != .research) || preparedAtom != nil else { throw InboxPlacementError.unsupported }
             result = try preparedAtom ?? makeAtom(capture: capture, request: request, db: db)
             result = result.mergingMetadataKeys(["sourceCaptureUuid": capture.reference.uuid])
             try result.insert(db)
@@ -173,11 +178,21 @@ struct InboxPlacementService: Sendable {
             guard result.type == .idea, result.ideaMetadata?.clientUUID == request.destination.uuid else { throw InboxPlacementError.unsupported }
         case .task: guard result.type == .task else { throw InboxPlacementError.unsupported }
         case .swipe: guard result.isSwipeFile else { throw InboxPlacementError.unsupported }
+        case .research: guard result.type == .research else { throw InboxPlacementError.unsupported }
         case .reference, .stageConnection: break
         }
         var receipt = InboxPlacementReceipt(request: request, resultAtomUUID: result.uuid,
             outcome: outcome(request), createdAt: ISO8601.string(from: Date()), originalStatus: capture.status,
             originalCreatedObjectIDs: capture.createdObjectIDs, createdAtom: created)
+
+        // A source that already lived here as a swipe (or an inquiry source)
+        // gains the research lens instead of a second row — "also keep as
+        // research" is a bit-flip, never a re-fetch.
+        if request.action == .research, created == nil, !result.swipeLenses.contains(.research) {
+            result = result.addingLens(.research)
+            try save(&result, db: db)
+            receipt.addedResearchLens = true
+        }
 
         if let spaceID = destination.spaceID, request.action != .stageConnection {
             let rows = try SpaceCompositionService.captureAddMembership(result, in: spaceID, db: db)
@@ -197,7 +212,28 @@ struct InboxPlacementService: Sendable {
                 receipt.addedGroupMember = true
             }
         }
-        if request.action == .reference, var page = target {
+        if request.action == .research, destination.kind == .connection, var concept = target {
+            // The source LINKS to the concept at once (its Sources rail and the
+            // graph see it), and a References row is staged for the page's own
+            // review sweep — a page shaped by hand is never silently edited.
+            guard result.uuid != concept.uuid else { throw InboxPlacementError.conflict }
+            if !hasLink(concept, to: result.uuid) {
+                concept = concept.addingLink(AtomLink(type: "source", uuid: result.uuid, entityType: AtomType.research.rawValue))
+                receipt.addedConceptLink = true
+            }
+            let section = ConnectionSectionType.references.rawValue
+            let inserts = concept.connectionStagedInserts
+            if !inserts.contains(where: { $0.sourceUUID == capture.reference.uuid && $0.section == section }) {
+                let label = [result.title, result.url].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " — ")
+                let insert = ConnectionStagedInsert(id: request.operationID, section: section,
+                    text: label.isEmpty ? capture.text : label, sourceKind: "research",
+                    sourceUUID: capture.reference.uuid, attachmentUUIDs: [])
+                concept = concept.withConnectionStagedInserts(inserts + [insert])
+                receipt.stagedInsertID = insert.id
+            }
+            try save(&concept, db: db)
+        }
+        if request.action == .reference || (request.action == .research && destination.kind == .page), var page = target {
             var value = try page.decodedSpaceComposition() ?? SpaceCompositionMetadata()
             let reference = SpaceCompositionReference(id: request.operationID, sourceUUID: result.uuid,
                 sourceTitle: result.title, excerpt: capture.text)
@@ -249,24 +285,26 @@ struct InboxPlacementService: Sendable {
         let destination = request.destination
         var snapshot: SpaceCompositionSnapshot?
         if let space = destination.spaceID { snapshot = try SpaceCompositionService.captureSnapshot(in: space, db: db) }
+        let research = request.action == .research
         switch destination.kind {
         case .space:
-            guard request.action == .page, destination.spaceID != nil else { throw InboxPlacementError.unsupported }
+            guard request.action == .page || research, destination.spaceID != nil else { throw InboxPlacementError.unsupported }
             return nil
         case .group, .page:
             guard let uuid = destination.uuid else { throw InboxPlacementError.missingDestination }
             let atom = try requireAtom(uuid, db: db)
             if let snapshot, snapshot.atomsByUUID[uuid] == nil { throw InboxPlacementError.missingDestination }
             if destination.kind == .group {
-                guard request.action == .page, atom.spaceCompositionKind == .group else { throw InboxPlacementError.unsupported }
+                guard request.action == .page || research, atom.spaceCompositionKind == .group else { throw InboxPlacementError.unsupported }
             } else {
                 guard atom.spaceCompositionKind?.isAuthored == true,
-                      request.action == .reference || request.action == .childPage else { throw InboxPlacementError.unsupported }
+                      request.action == .reference || request.action == .childPage || research else { throw InboxPlacementError.unsupported }
             }
             return atom
         case .connection:
-            guard request.action == .stageConnection, let uuid = destination.uuid,
-                  ConnectionSectionType(rawValue: request.connectionSection ?? "evidence") != nil else { throw InboxPlacementError.unsupported }
+            guard let uuid = destination.uuid else { throw InboxPlacementError.missingDestination }
+            guard research || (request.action == .stageConnection &&
+                  ConnectionSectionType(rawValue: request.connectionSection ?? "evidence") != nil) else { throw InboxPlacementError.unsupported }
             let atom = try requireAtom(uuid, db: db)
             guard atom.type == .connection else { throw InboxPlacementError.missingDestination }
             return atom
@@ -274,10 +312,28 @@ struct InboxPlacementService: Sendable {
             guard request.action == .idea else { throw InboxPlacementError.unsupported }
             if let uuid = destination.uuid, try requireAtom(uuid, db: db).type != .clientProfile { throw InboxPlacementError.missingDestination }
             return nil
-        case .pages: guard request.action == .page else { throw InboxPlacementError.unsupported }; return nil
+        case .pages: guard request.action == .page || research else { throw InboxPlacementError.unsupported }; return nil
+        case .research: guard research else { throw InboxPlacementError.unsupported }; return nil
         case .today: guard request.action == .task else { throw InboxPlacementError.unsupported }; return nil
         case .swipe: guard request.action == .swipe else { throw InboxPlacementError.unsupported }; return nil
         }
+    }
+
+    /// Whether the atom already links to `uuid` (any link type).
+    nonisolated private static func hasLink(_ atom: Atom, to uuid: String) -> Bool {
+        decodedLinks(atom).contains { $0.uuid == uuid }
+    }
+
+    nonisolated private static func decodedLinks(_ atom: Atom) -> [AtomLink] {
+        guard let raw = atom.links, let data = raw.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([AtomLink].self, from: data)) ?? []
+    }
+
+    nonisolated private static func removingLink(_ atom: Atom, to uuid: String, type: String) throws -> Atom {
+        var copy = atom
+        let kept = decodedLinks(atom).filter { !($0.uuid == uuid && $0.type == type) }
+        copy.links = String(decoding: try JSONEncoder().encode(kept), as: UTF8.self)
+        return copy
     }
 
     nonisolated private static func makeAtom(capture: Capture, request: InboxPlacementRequest, db: Database) throws -> Atom {
@@ -321,6 +377,12 @@ struct InboxPlacementService: Sendable {
         case .task: return "Task created in Today"
         case .swipe: return request.existingAtomUUID == nil ? "Saved in Swipe" : "Existing Swipe reused"
         case .page: return "Page saved to \(request.destination.path)"
+        case .research:
+            switch request.destination.kind {
+            case .connection: return "Research source linked to \(request.destination.path) · awaiting review in References"
+            case .research: return request.existingAtomUUID == nil ? "Saved as Research in your Library" : "Existing source kept as Research"
+            default: return "Research source saved to \(request.destination.path)"
+            }
         }
     }
 
@@ -349,11 +411,24 @@ struct InboxPlacementService: Sendable {
             page = try page.replacingSpaceComposition(value); try save(&page, db: db)
         }
         if let insertID = receipt.stagedInsertID {
-            var concept = try requireAtom(receipt.resultAtomUUID, db: db)
+            // Evidence stages ON the result (the concept); a research source
+            // stages on the destination concept and the result is the source.
+            let conceptUUID = request.action == .research ? (request.destination.uuid ?? receipt.resultAtomUUID) : receipt.resultAtomUUID
+            var concept = try requireAtom(conceptUUID, db: db)
             var inserts = concept.connectionStagedInserts
             guard inserts.contains(where: { $0.id == insertID }) else { throw InboxPlacementError.conflict }
             inserts.removeAll { $0.id == insertID }
             concept = concept.withConnectionStagedInserts(inserts); try save(&concept, db: db)
+        }
+        if receipt.addedConceptLink == true, let uuid = request.destination.uuid {
+            var concept = try requireAtom(uuid, db: db)
+            concept = try removingLink(concept, to: receipt.resultAtomUUID, type: "source")
+            try save(&concept, db: db)
+        }
+        if receipt.addedResearchLens == true,
+           var source = try Atom.filter(Column("uuid") == receipt.resultAtomUUID).filter(Column("is_deleted") == false).fetchOne(db) {
+            source = source.removingLens(.research)
+            try save(&source, db: db)
         }
         for id in receipt.membershipIDs {
             guard var row = try CanvasBlockRecord.filter(Column("id") == id).fetchOne(db), !row.isDeleted, row.isPlaced != true else {

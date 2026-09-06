@@ -93,8 +93,12 @@ final class InboxActionExecutor {
     @discardableResult
     func executeRecommendation(item: InboxItem, recommendation: InboxRecommendation) async throws -> InboxExecutionOutcome? {
         if let destination = recommendation.filingDestination {
-            let (atom, receipt) = try await executeFiling(item: item, destination: destination,
-                action: recommendation.filingAction ?? destination.defaultAction)
+            let action = recommendation.filingAction ?? destination.defaultAction
+            if action == .research {
+                let (atom, receipt) = try await executeResearch(item: item, destination: destination)
+                return .filed(atom, receipt)
+            }
+            let (atom, receipt) = try await executeFiling(item: item, destination: destination, action: action)
             return .filed(atom, receipt)
         }
         switch recommendation.kind {
@@ -133,6 +137,11 @@ final class InboxActionExecutor {
             return .atom(try await executeNew(item: item, atomType: atomType))
         case .fileAsSwipe:
             return .atom(try await executeSwipe(item: item))
+        case .fileAsResearch:
+            // Reached only for a bundle without its typed destination (an
+            // older writer) — the Library is the honest home.
+            let (atom, receipt) = try await executeResearch(item: item, destination: recommendation.filingDestination ?? .libraryResearch)
+            return .filed(atom, receipt)
         case .addToFlow:
             // The recommendation names no flow — the router never picks one.
             // Accepting it opens the flow picker, which is a UI move, so the
@@ -222,6 +231,43 @@ final class InboxActionExecutor {
     /// misses. Dedups against the existing library so filing a known link
     /// adopts it instead of forking a duplicate; the undo removes only a swipe
     /// THIS action created.
+    // MARK: - Research sources (September 2026 — "research, not swipe")
+
+    /// The capture is a SOURCE to read or study: it becomes a research-lens
+    /// atom (never a swipe) and lands where the destination says — a Space's
+    /// materials, a Group, a Page's references, a Concept's References, or
+    /// the Library. A link already saved (as a swipe, or as an inquiry
+    /// source) is reused and gains the research lens; nothing is fetched
+    /// twice. Enrichment (title, thumbnail) runs after filing, best-effort.
+    @discardableResult
+    func executeResearch(item: InboxItem, destination: InboxFilingDestination) async throws -> (Atom, InboxPlacementReceipt) {
+        if let url = item.detectedSwipeURL {
+            let prepared = await ResearchSourceIntake.prepare(
+                url: url,
+                note: Self.swipeNote(rawText: item.rawText, url: url),
+                title: item.title
+            )
+            let (atom, receipt) = try await executeFiling(
+                item: item, destination: destination, action: .research,
+                preparedAtom: prepared.existingUUID == nil ? prepared.atom : nil,
+                existingAtomUUID: prepared.existingUUID
+            )
+            if prepared.existingUUID == nil {
+                let uuid = atom.uuid
+                Task { await ResearchSourceIntake.enrich(atomUUID: uuid) }
+            }
+            await reindex(atom: atom)
+            return (atom, receipt)
+        }
+        guard !item.attachmentUUIDs.isEmpty else { throw InboxPlacementError.unsupported }
+        let prepared = ResearchSourceIntake.prepare(
+            pages: item.attachmentUUIDs, text: item.rawText, title: item.title ?? fallbackTitle(for: item)
+        )
+        let (atom, receipt) = try await executeFiling(item: item, destination: destination, action: .research, preparedAtom: prepared)
+        await reindex(atom: atom)
+        return (atom, receipt)
+    }
+
     /// What filing produced: the swipe, plus whether it pre-existed the
     /// capture. Adoption is real news — the caller's toast must not claim
     /// "Saved as swipe" over a no-op (iOS twin: InboxActionEngine's receipt).
@@ -474,33 +520,55 @@ final class InboxActionExecutor {
     /// ripens toward one development conversation.
     @discardableResult
     func executeFeedSeedling(item: InboxItem, recommendation: InboxRecommendation) async throws -> Seedling? {
-        try await requireInboxSource(item)
+        let source = try await settlement(for: item)
         guard let move = recommendation.atlasMove,
               let seedlingUUID = move.seedlingUUID,
               let seedling = try await SeedlingRepository.shared.fetch(uuid: seedlingUUID),
               !seedling.isDeleted, seedling.status != .developed else { return nil }
 
-        let thought = SeedlingThought(text: item.rawText, sourceKind: .inbox, sourceUUID: item.uuid)
+        let thought = SeedlingThought(text: item.rawText, sourceKind: source.thoughtSource, sourceUUID: item.uuid)
         // A nil feed means the dedup guard caught a repeat (same capture) —
         // the thought is already growing there, which IS the desired state.
         let fed = try await SeedlingRepository.shared.feed(uuid: seedlingUUID, thought: thought) ?? seedling
         await stampAffinityIfNamed(seedlingUUID: seedlingUUID, move: move)
-        try? await inboxRepo.updateMetadata(uuid: item.uuid, merging: [
-            "actionOutcome": "Grew \u{201C}\(fed.name)\u{201D}"
-        ])
-        try await inboxRepo.markActioned(uuid: item.uuid)
+        let outcome = "Grew \u{201C}\(fed.name)\u{201D}"
+        try await settleAsGrown(source, outcome: outcome)
 
         let originalItem = item
         CosmoUndoManager.shared.register(
             InlineUndoAction(actionDescription: "Grow Seedling") { [weak self] in
                 _ = try? await SeedlingRepository.shared.removeThought(uuid: seedlingUUID, sourceUUID: originalItem.uuid)
-                try? await self?.inboxRepo.restore(originalItem)
+                await self?.unsettle(source)
             } redo: { [weak self] in
                 _ = try? await SeedlingRepository.shared.feed(uuid: seedlingUUID, thought: thought)
-                try? await self?.inboxRepo.markActioned(uuid: originalItem.uuid)
+                try? await self?.settleAsGrown(source, outcome: outcome)
             }
         )
         return fed
+    }
+
+    /// Settle a capture as "grew a concept": the queue row is actioned with
+    /// the honest outcome; a lane row is applied (nothing new to record).
+    private func settleAsGrown(_ source: CaptureSettlement, outcome: String) async throws {
+        switch source {
+        case .inbox(let item):
+            try await inboxRepo.markActioned(uuid: item.uuid, outcome: outcome)
+        case .lane(let row):
+            try await CapturedItemRepository.shared.updateRouting(
+                uuid: row.uuid,
+                destinationId: row.captureDestinationId,
+                parsedCommand: row.parsedCommand,
+                parsedIntent: "lane_grow_seedling",
+                confidence: row.routingConfidence,
+                status: .applied,
+                createdObjectIds: row.createdObjectIds,
+                parentDeepDiveId: row.parentDeepDiveId,
+                parentInquirySessionId: row.parentInquirySessionId,
+                parentQuestionId: row.parentQuestionId,
+                parentProjectId: row.parentProjectId
+            )
+            NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
+        }
     }
 
     /// The capture names a new proto-concept: a seedling is born in the
@@ -509,9 +577,9 @@ final class InboxActionExecutor {
     /// later, through development, if the seedling earns it.
     @discardableResult
     func executeStartSeedling(item: InboxItem, recommendation: InboxRecommendation) async throws -> Seedling? {
-        try await requireInboxSource(item)
+        let source = try await settlement(for: item)
         let name = recommendation.atlasMove?.germinateTitle ?? item.title ?? fallbackTitle(for: item)
-        let thought = SeedlingThought(text: item.rawText, sourceKind: .inbox, sourceUUID: item.uuid)
+        let thought = SeedlingThought(text: item.rawText, sourceKind: source.thoughtSource, sourceUUID: item.uuid)
 
         // A live seedling already carries this concept key? Feed it instead
         // of forking a twin — starting twice is a vocabulary echo, not intent.
@@ -530,6 +598,9 @@ final class InboxActionExecutor {
                 Seedling.new(name: name, firstThought: thought, scopeDeepDiveUUID: scopeDive?.uuid)
             )
             fedExisting = false
+            // A new concept changes what the router would say about thoughts
+            // it already filed toward folders — re-read them (bounded, throttled).
+            InboxIngestService.shared.reconsiderFiledCaptures(reason: "seedling-born")
             if let scopeDive {
                 NotificationCenter.default.post(
                     name: CosmoNotification.Inquiry.seedbedChanged,
@@ -542,12 +613,8 @@ final class InboxActionExecutor {
 
         let startedOutcome = scopeDive?.title.map { "Started concept \u{201C}\(seedling.name)\u{201D} in \($0)" }
             ?? "Started concept \u{201C}\(seedling.name)\u{201D}"
-        try? await inboxRepo.updateMetadata(uuid: item.uuid, merging: [
-            "actionOutcome": fedExisting
-                ? "Grew \u{201C}\(seedling.name)\u{201D}"
-                : startedOutcome
-        ])
-        try await inboxRepo.markActioned(uuid: item.uuid)
+        let outcome = fedExisting ? "Grew \u{201C}\(seedling.name)\u{201D}" : startedOutcome
+        try await settleAsGrown(source, outcome: outcome)
 
         let originalItem = item
         let seedlingUUID = seedling.uuid
@@ -558,14 +625,14 @@ final class InboxActionExecutor {
                 } else {
                     try? await SeedlingRepository.shared.delete(uuid: seedlingUUID)
                 }
-                try? await self?.inboxRepo.restore(originalItem)
+                await self?.unsettle(source)
             } redo: { [weak self] in
                 if fedExisting {
                     _ = try? await SeedlingRepository.shared.feed(uuid: seedlingUUID, thought: thought)
                 } else {
                     try? await SeedlingRepository.shared.undelete(uuid: seedlingUUID)
                 }
-                try? await self?.inboxRepo.markActioned(uuid: originalItem.uuid)
+                try? await self?.settleAsGrown(source, outcome: outcome)
             }
         )
         return seedling
@@ -738,6 +805,14 @@ final class InboxActionExecutor {
     private enum CaptureSettlement {
         case inbox(InboxItem)
         case lane(CapturedItem)
+
+        /// Where a grown thought says it came from.
+        var thoughtSource: SeedlingThoughtSource {
+            switch self {
+            case .inbox: return .inbox
+            case .lane: return .lane
+            }
+        }
     }
 
     private func settlement(for item: InboxItem) async throws -> CaptureSettlement {

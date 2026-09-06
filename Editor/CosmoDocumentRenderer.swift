@@ -125,11 +125,14 @@ struct CosmoDocumentRenderer: View {
                     .foregroundColor(secondaryTextColor))
             }
         default:
+            // Nested list items inset by level — the same ladder the editors
+            // draw, so a rendered note reads exactly like the page.
             AnyView(inlineText(for: block, at: index, in: siblings)
                 .font(font(for: block))
                 .foregroundColor(textColor)
                 .lineLimit(lineLimit)
-                .fixedSize(horizontal: false, vertical: true))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, CGFloat(block.listIndentLevel) * RichListIndent.insetPerLevel))
         }
     }
 
@@ -483,16 +486,11 @@ struct CosmoDocumentRenderer: View {
         case .quote:
             prefix = Text("│ ").foregroundColor(secondaryTextColor)
         case .bulletList:
-            prefix = Text("• ")
+            prefix = Text(RichListIndent.bulletPrefix(level: block.listIndentLevel))
         case .numberedList:
-            // Compute list-relative position
-            var listPosition = 1
-            var j = index - 1
-            while j >= 0 && siblings[j].kind == .numberedList {
-                listPosition += 1
-                j -= 1
-            }
-            prefix = Text("\(listPosition). ")
+            // Level-aware position: a deeper item never breaks the run above.
+            let listPosition = RichListIndent.numberedOrdinals(for: siblings)[index] + 1
+            prefix = Text(RichListIndent.numberedPrefix(position: listPosition, level: block.listIndentLevel))
         case .checklist:
             // Same checkbox grammar as iOS notes: circle / checkmark.circle.fill.
             let checked = block.checked ?? false

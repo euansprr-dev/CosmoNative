@@ -8,7 +8,7 @@ struct InboxCaptureReference: Codable, Equatable, Sendable {
 }
 
 struct InboxFilingDestination: Codable, Equatable, Identifiable, Sendable {
-    enum Kind: String, Codable, Sendable { case pages, space, group, page, ideas, connection, swipe, today }
+    enum Kind: String, Codable, Sendable { case pages, space, group, page, ideas, connection, swipe, today, research }
     var kind: Kind
     var uuid: String?
     var spaceID: String?
@@ -25,6 +25,7 @@ struct InboxFilingDestination: Codable, Equatable, Identifiable, Sendable {
         case .connection: return "point.3.connected.trianglepath.dotted"
         case .swipe: return "rectangle.stack"
         case .today: return "checkmark.circle"
+        case .research: return "books.vertical"
         }
     }
 
@@ -35,13 +36,31 @@ struct InboxFilingDestination: Codable, Equatable, Identifiable, Sendable {
         case .connection: return .stageConnection
         case .swipe: return .swipe
         case .today: return .task
+        case .research: return .research
         case .pages, .space, .group: return .page
         }
     }
+
+    /// Destinations that can also receive the capture as a Research SOURCE
+    /// (a link or scanned pages saved for their content): a Space (with its
+    /// materials), a Group, a Page (as a reference), a Concept (linked, and
+    /// staged in References), the Library, or the Research shelf itself.
+    var acceptsResearch: Bool {
+        switch kind {
+        case .space, .group, .page, .connection, .pages, .research: return true
+        case .ideas, .swipe, .today: return false
+        }
+    }
+
+    /// The Library's research shelf — the home for a source with no Space.
+    static let libraryResearch = InboxFilingDestination(kind: .research, name: "Research", path: "Library › Research")
 }
 
 enum InboxFilingAction: String, Codable, CaseIterable, Sendable {
     case page, childPage, reference, idea, stageConnection, swipe, task
+    /// Save the capture as a Research SOURCE (research lens, never the swipe
+    /// file) and put it where the destination says. September 2026.
+    case research
 
     var title: String {
         switch self {
@@ -52,6 +71,7 @@ enum InboxFilingAction: String, Codable, CaseIterable, Sendable {
         case .stageConnection: return "Add for review"
         case .swipe: return "Save Swipe"
         case .task: return "Create task"
+        case .research: return "Save Research"
         }
     }
 
@@ -69,6 +89,14 @@ enum InboxFilingAction: String, Codable, CaseIterable, Sendable {
         case .stageConnection: return "Adds this capture as evidence for review in the Concept. Its writing changes only when you accept the evidence."
         case .swipe: return "Saves external inspiration in Swipe. An existing saved original is reused."
         case .task: return "Creates a task in Today, preserving the capture’s notes and checklist."
+        case .research:
+            switch destination.kind {
+            case .space: return "Saves the link as a Research source in this Space. It appears with the Space’s materials, ready to open in Study — not in the Swipe File."
+            case .group: return "Saves the link as a Research source and adds it to this Group."
+            case .connection: return "Saves the link as a Research source, links it to this Concept, and stages it in References for your review."
+            case .page: return "Saves the link as a Research source and attaches it as a reference on this Page."
+            default: return "Saves the link as a Research source in your Library — for reading and study, not the Swipe File."
+            }
         }
     }
 }
@@ -103,6 +131,12 @@ struct InboxPlacementReceipt: Codable, Equatable, Sendable {
     var addedAttachmentIDs: [String]? = nil
     var isUndone = false
     var retainedOriginal = false
+    /// Research filing onto a source that already existed (a swipe of the
+    /// same link, an inquiry source) ADDED the research lens — undo takes
+    /// exactly that back. Optional so pre-September-2026 receipts decode.
+    var addedResearchLens: Bool? = nil
+    /// Research filing into a Concept added the concept → source link.
+    var addedConceptLink: Bool? = nil
 }
 
 struct InboxAttachmentOwner: Codable, Equatable, Sendable {
@@ -136,5 +170,11 @@ extension InboxItem {
 
     var captureReference: InboxCaptureReference {
         InboxCaptureReference(kind: metadataDictionary["captureRecordKind"] as? String == "lane" ? .lane : .inbox, uuid: uuid)
+    }
+
+    /// For a lane proxy, the lane it rests in — so a "Move to lane" menu can
+    /// leave that lane out. Nil for queue captures.
+    var restingLaneID: String? {
+        metadataDictionary["captureLaneId"] as? String
     }
 }

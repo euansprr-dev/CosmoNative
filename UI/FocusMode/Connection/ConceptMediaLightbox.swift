@@ -495,6 +495,8 @@ private struct ConceptOwnedImageStage: View {
                     .aspectRatio(contentMode: .fit)
                     .clipShape(.rect(cornerRadius: 14))
                     .accessibilityLabel(item.caption ?? item.assetTitle ?? "Image")
+                    .imageSaveAffordance(saveRequest)
+                    .imageSaveContextMenu(saveRequest)
             } else if failed {
                 RoundedRectangle(cornerRadius: 14)
                     .fill(DS.glassSectionFill)
@@ -516,5 +518,21 @@ private struct ConceptOwnedImageStage: View {
             image = await MediaAssetStore.resolveImage(item)
             failed = image == nil
         }
+    }
+
+    private var saveRequest: ImageSaveRequest {
+        let title = item.assetTitle ?? item.caption
+        if let path = item.assetPath, FileManager.default.fileExists(atPath: path) {
+            return ImageSaveRequest(.file(URL(fileURLWithPath: path)), title: title)
+        }
+        if let remote = item.assetRemoteURL, let url = URL(string: remote) {
+            return ImageSaveRequest(.remote(url), title: title)
+        }
+        return ImageSaveRequest(.custom({ [item] in
+            guard let image = await MediaAssetStore.resolveImage(item),
+                  let tiff = image.tiffRepresentation,
+                  let data = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return nil }
+            return ImageSavePayload(data: data, type: .png, stem: ImageSaveNaming.stem(preferred: nil, title: title))
+        }), title: title)
     }
 }

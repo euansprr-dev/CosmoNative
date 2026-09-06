@@ -20,8 +20,12 @@ struct InboxQueueRow: View {
     /// lists hide their submenus; nil handlers hide their items.
     var lanes: [CaptureDestination] = []
     var inquirySpaces: [InquirySpaceOption] = []
+    var seedlings: [Seedling] = []
     var onMoveToLane: ((CaptureDestination) -> Void)? = nil
     var onStartInquiry: ((InquirySpaceOption?) -> Void)? = nil
+    /// nil seedling = "New concept…" (names it in the destination sheet).
+    var onGrowSeedling: ((Seedling?) -> Void)? = nil
+    var onSaveAsResearch: (() -> Void)? = nil
     var onChooseDestination: (() -> Void)? = nil
 
     @State private var isHovered = false
@@ -66,6 +70,20 @@ struct InboxQueueRow: View {
             } label: {
                 Label("Start inquiry in", systemImage: "text.magnifyingglass")
             }
+        }
+        if let onGrowSeedling {
+            Menu {
+                ForEach(seedlings, id: \.uuid) { seedling in
+                    Button("\(seedling.name) · \(seedling.massSummary)", systemImage: "leaf") { onGrowSeedling(seedling) }
+                }
+                if !seedlings.isEmpty { Divider() }
+                Button("New concept…", systemImage: "plus") { onGrowSeedling(nil) }
+            } label: {
+                Label("Grow a concept", systemImage: "leaf")
+            }
+        }
+        if let onSaveAsResearch, item.canBecomeResearch {
+            Button("Save as Research…", systemImage: "books.vertical", action: onSaveAsResearch)
         }
         if let onChooseDestination {
             Button("Choose destination…", systemImage: "tray.and.arrow.down", action: onChooseDestination)

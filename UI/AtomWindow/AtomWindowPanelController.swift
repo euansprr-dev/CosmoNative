@@ -131,7 +131,7 @@ final class AtomWindowPanelController: NSWindowController {
             if let self, event.window === self.panel,
                event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
                event.charactersIgnoringModifiers?.lowercased() == "k" {
-                self.viewModel.isSearchVisible.toggle()
+                self.viewModel.toggleSwitcher()
                 return nil
             }
             if event.keyCode == 14,
@@ -232,6 +232,9 @@ final class AtomWindowPanelController: NSWindowController {
         // teardown has been processed.
         panel.alphaValue = 0
         viewModel.isPresented = false
+        // The switcher layer never survives a hide — ⌥E reopens onto the
+        // item exactly as it was left.
+        viewModel.prepareForHide()
         // Keep the one open note mounted: reopening preserves its scroll,
         // undo history, and hydrated editors. Other focus modes still use
         // their existing teardown lifecycle.

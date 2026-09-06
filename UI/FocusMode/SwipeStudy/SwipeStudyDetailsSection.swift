@@ -732,29 +732,16 @@ struct TaxonomySection: View {
     }
 
     private func createAndLinkCreator(name: String) {
+        // Through the directory: a handle spelled from the name, the post's
+        // honest platform, and a twin-aware match — never a handle-less atom
+        // that nothing could ever match again.
+        let platform = currentAtom.flatMap { CreatorIdentity.platform(for: $0) }
         Task {
-            let metaString: String? = {
-                guard let data = try? JSONEncoder().encode(CreatorMetadata(isActive: true)),
-                      let str = String(data: data, encoding: .utf8) else { return nil }
-                return str
-            }()
-            let newCreator = Atom(
-                uuid: UUID().uuidString,
-                type: .creator,
-                title: name,
-                body: nil,
-                structured: nil,
-                metadata: metaString,
-                createdAt: ISO8601.string(from: Date()),
-                updatedAt: ISO8601.string(from: Date()),
-                isDeleted: false,
-                localVersion: 0,
-                serverVersion: 0,
-                syncVersion: 0
-            )
-            try? await AtomRepository.shared.create(newCreator)
+            guard let creator = try? await CreatorDirectory.shared.resolve(
+                handle: name, name: name, platform: platform, derivedFromName: true
+            ) else { return }
             await MainActor.run {
-                selectCreator(name: name, uuid: newCreator.uuid)
+                selectCreator(name: creator.title ?? name, uuid: creator.uuid)
             }
         }
     }

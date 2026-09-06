@@ -431,6 +431,8 @@ final class SoundEngine {
     static func goalBell() { engine.play(.milestone) }
     static func dragPickup() { engine.play(.open) }
     static func dragDrop() { engine.play(.place) }
+    /// An image landed in Downloads / on disk — the same "placed" knock as a drop.
+    static func imageSaved() { engine.play(.place) }
     static func deleteTuck() { engine.play(.remove) }
     static func undo() { engine.play(.undo) }
     static func companionFlourish(_ companion: Companion) { engine.play(.confirm) }

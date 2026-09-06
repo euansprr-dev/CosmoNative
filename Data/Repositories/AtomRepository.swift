@@ -2475,8 +2475,12 @@ extension AtomRepository {
             return try request.fetchAll(db)
         }
 
+        // The LIKE prefilter is a net, not the truth: a uuid that appears in
+        // another field (or as a substring) must not attribute a post.
+        let verified = creatorUUID == nil ? allSwipes : allSwipes.filter { $0.swipeAnalysis?.creatorUUID == creatorUUID }
+
         // Sort by hookScore descending (from swipeAnalysis)
-        let sorted = allSwipes.sorted { a, b in
+        let sorted = verified.sorted { a, b in
             let scoreA = a.swipeAnalysis?.hookScore ?? 0
             let scoreB = b.swipeAnalysis?.hookScore ?? 0
             return scoreA > scoreB

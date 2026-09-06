@@ -105,7 +105,7 @@ struct SwipeStudyStagePane: View {
             if model.isCarouselContent,
                let items = model.igMediaData?.carouselItems ?? atom.richContent?.instagramData?.carouselItems,
                !items.isEmpty {
-                SwipeStudyCarouselPager(model: model, items: items)
+                SwipeStudyCarouselPager(model: model, items: items, title: atom.title)
             } else if model.isCarouselContent {
                 carouselLoadingState
             } else {
@@ -305,6 +305,8 @@ struct SwipeStudyStagePane: View {
                 Rectangle().fill(DS.glassSectionFill)
             }
         }
+        // The pill fetches the ORIGINAL from `url` — the cache holds a 600px thumb.
+        .imageSaveAffordance(ImageSaveRequest(.remote(url), title: atom.title))
     }
 
     // MARK: - Metadata row
@@ -389,6 +391,8 @@ struct SwipeStudyStagePane: View {
 struct SwipeStudyCarouselPager: View {
     @Bindable var model: SwipeStudyModel
     let items: [CarouselItem]
+    /// The swipe's title, for the saved image's filename.
+    var title: String? = nil
 
     @State private var isHovered = false
 
@@ -498,6 +502,7 @@ struct SwipeStudyCarouselPager: View {
                 Rectangle().fill(DS.glassSectionFill)
             }
         }
+        .imageSaveAffordance(ImageSaveRequest(.remote(sourceURL), title: title))
         .frame(maxWidth: 400, maxHeight: 400)
     }
 }

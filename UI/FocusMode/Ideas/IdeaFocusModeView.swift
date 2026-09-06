@@ -1175,24 +1175,26 @@ extension IdeaFocusModeView {
         }
     }
 
+    /// The slides live in a reorder band: hover a row and its numeral yields
+    /// to a grip; pull the grip and the row lifts while its siblings step
+    /// aside live. Release commits one undoable "Move Slide".
     private func outlineSlides(_ outline: CodexOutlineModel) -> some View {
-        VStack(alignment: .leading, spacing: IdeaOutlineLayoutMetrics.normalRowSpacing) {
-            ForEach(outline.slides) { slide in
-                outlineSlideRow(slide)
-            }
+        OutlineReorderBand(
+            items: outline.slides,
+            spacing: IdeaOutlineLayoutMetrics.normalRowSpacing,
+            onReorder: { from, to in reorderSlide(from: from, to: to) }
+        ) { slide, handle in
+            outlineSlideRow(slide, handle: handle)
         }
         .padding(.horizontal, DS.space4)
     }
 
-    private func outlineSlideRow(_ slide: CodexOutlineSlide) -> some View {
-        let isHovered = hoveredSlideID == slide.id
+    private func outlineSlideRow(_ slide: CodexOutlineSlide, handle: OutlineReorderHandle) -> some View {
+        // While any row is airborne the hover reveals go quiet: the ✕ must not
+        // flash on every row the lifted one passes over.
+        let isHovered = hoveredSlideID == slide.id && !handle.isAnyLifted
         return HStack(alignment: .top, spacing: DS.space16) {
-            Text(romanNumeral(for: slide.position))
-                .font(DS.caption.weight(.bold).monospacedDigit())
-                .foregroundStyle(focusTextMuted)
-                .frame(width: 36, height: IdeaOutlineLayoutMetrics.minimumEditorHeight, alignment: .topLeading)
-                .contentTransition(.numericText())
-                .accessibilityHidden(true)
+            outlineGutter(for: slide, handle: handle, showsGrip: isHovered || handle.isLifted)
 
             VStack(alignment: .leading, spacing: DS.space2) {
                 // The framework's beat, when the outline knows it — the slide
@@ -1236,6 +1238,7 @@ extension IdeaFocusModeView {
             .help("Remove slide")
             .accessibilityLabel("Remove slide \(slide.position)")
         }
+        .background { outlineLiftWash(handle.isLifted) }
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) {
                 if hovering {
@@ -1245,6 +1248,65 @@ extension IdeaFocusModeView {
                 }
             }
         }
+    }
+
+    /// The gutter: the roman numeral at rest, a six-dot grip on hover. The
+    /// grip is the only thing a drag can start from — the note editor beside
+    /// it owns the pointer for text.
+    private func outlineGutter(for slide: CodexOutlineSlide, handle: OutlineReorderHandle, showsGrip: Bool) -> some View {
+        ZStack(alignment: .topLeading) {
+            Text(romanNumeral(for: slide.position))
+                .font(DS.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(focusTextMuted)
+                .contentTransition(.numericText())
+                .opacity(showsGrip ? 0 : 1)
+                .accessibilityHidden(true)
+
+            outlineGripGlyph
+                .foregroundStyle(handle.isLifted ? focusTextSecondary : focusTextMuted)
+                .opacity(showsGrip ? 1 : 0)
+                .help("Drag to reorder")
+                .accessibilityLabel("Reorder slide \(slide.position)")
+        }
+        .frame(width: 36, height: IdeaOutlineLayoutMetrics.minimumEditorHeight, alignment: .topLeading)
+        .animation(ProMotionSprings.hover, value: showsGrip)
+        .outlineReorderGrip(handle)
+    }
+
+    /// Two columns of three dots — the reorder grip Apple's own lists wear,
+    /// drawn small enough to sit where a numeral did.
+    private var outlineGripGlyph: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<2, id: \.self) { _ in
+                VStack(spacing: 3) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        Circle().frame(width: 2.5, height: 2.5)
+                    }
+                }
+            }
+        }
+        .padding(.top, 3)
+        .padding(.leading, 2)
+    }
+
+    /// The paper lifts under the airborne row: a soft surface wash with a
+    /// hairline and a low shadow, bled out past the row's own edges so the
+    /// note never looks boxed in. Scale would resample the editor's text for
+    /// nothing — depth comes from the shadow alone.
+    @ViewBuilder
+    private func outlineLiftWash(_ isLifted: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(focusSurface)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(focusBorder, lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(isLifted ? 0.12 : 0), radius: 10, y: 4)
+            .padding(.horizontal, -DS.space10)
+            .padding(.vertical, -DS.space6)
+            .opacity(isLifted ? 1 : 0)
+            .animation(ProMotionSprings.snappy, value: isLifted)
+            .allowsHitTesting(false)
     }
 
     private func slideNoteBinding(for slideId: UUID) -> Binding<String> {
@@ -1296,6 +1358,16 @@ extension IdeaFocusModeView {
         outline.slides.removeAll { $0.id == id }
         CodexOutlineEditing.renumberSlides(in: &outline)
         applyOutlineChange("Remove Slide", outline)
+    }
+
+    /// A dragged row landing in a new slot — one undoable move, numerals
+    /// renumbered, focus left exactly where it was.
+    private func reorderSlide(from: Int, to: Int) {
+        guard var outline = viewModel.codexOutline,
+              outline.slides.indices.contains(from) else { return }
+        let slideID = outline.slides[from].id
+        guard CodexOutlineEditing.moveSlide(slideID, toSlot: to, in: &outline) else { return }
+        applyOutlineChange("Move Slide", outline)
     }
 
     /// ⌥↑ / ⌥↓ while a slide is focused — reorder without leaving the keys.

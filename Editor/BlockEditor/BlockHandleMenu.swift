@@ -42,6 +42,10 @@ struct BlockHandleMenuView: View {
     var onCut: (() -> Void)? = nil
     /// Sections only: hoist the children, drop the box. nil hides the row.
     var onUngroup: (() -> Void)? = nil
+    /// List items only: nest one level under the item above / walk back
+    /// toward the margin (Tab / ⇧Tab from the keyboard). nil hides the rows.
+    var onIndent: (() -> Void)? = nil
+    var onOutdent: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -98,6 +102,18 @@ struct BlockHandleMenuView: View {
                     id: "ungroup", icon: "square.dashed", label: "Ungroup",
                     trailing: .none, isDestructive: false, index: base
                 ) { onUngroup() }
+            }
+            if let onIndent, currentKind?.supportsListIndent == true {
+                menuRow(
+                    id: "indent", icon: "increase.indent", label: "Indent",
+                    trailing: .shortcut("⇥"), isDestructive: false, index: base
+                ) { onIndent() }
+            }
+            if let onOutdent, currentKind?.supportsListIndent == true {
+                menuRow(
+                    id: "outdent", icon: "decrease.indent", label: "Outdent",
+                    trailing: .shortcut("⇧⇥"), isDestructive: false, index: base
+                ) { onOutdent() }
             }
             menuRow(
                 id: "duplicate", icon: "plus.square.on.square", label: "Duplicate",

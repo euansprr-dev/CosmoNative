@@ -108,6 +108,10 @@ enum InboxOverrideFocus: Equatable, Sendable {
     case destinations
     case inquiry
     case lanes
+    /// The growing seedlings — the G verb lands here.
+    case concepts
+    /// Research homes for a link: Library, Spaces, Concepts.
+    case research
 }
 
 // MARK: - Inquiry destinations
@@ -157,6 +161,15 @@ protocol InboxInspectorHost {
     var lanes: [CaptureDestination] { get }
     /// The capture leaves the queue (or its current lane) for a lane.
     func moveToLane(_ item: InboxItem, lane: CaptureDestination) async
+    /// Growing seedlings, ripest first — the "Grow a concept" menus and the
+    /// destination sheet's Growing concepts section.
+    var seedlings: [Seedling] { get }
+    /// The capture adds mass to a growing seedling — no page, no canvas.
+    func growSeedling(_ item: InboxItem, seedling: Seedling) async
+    /// The capture names a NEW concept; the thought is its first seed.
+    func startSeedling(_ item: InboxItem, named name: String) async
+    /// The capture becomes a Research SOURCE (never a swipe) at a destination.
+    func fileAsResearch(_ item: InboxItem, destination: InboxFilingDestination) async
     func fileAsIdea(_ item: InboxItem) async
     func fileAsSwipe(_ item: InboxItem) async
     /// True when at least one flow exists to add a step to. Gates the `→ Flow`
@@ -166,6 +179,9 @@ protocol InboxInspectorHost {
     func growSeedling(_ item: InboxItem) async
     func connectCapture(_ item: InboxItem) async
     func showOverride(for item: InboxItem)
+    /// The destination sheet opened on one family (inquiries, lanes,
+    /// growing concepts, research homes).
+    func showOverride(for item: InboxItem, focus: InboxOverrideFocus)
     func dismiss(item: InboxItem) async
 }
 
@@ -182,7 +198,7 @@ extension InboxRouteKind {
             return DS.orange
         case .feedConnection:
             return DS.entityConnection
-        case .advanceQuestion, .spawnQuestion, .germinateDeepDive, .startInquiry:
+        case .advanceQuestion, .spawnQuestion, .germinateDeepDive, .startInquiry, .fileAsResearch:
             return DS.entityResearch
         case .attachClient:
             return DS.entityIdea

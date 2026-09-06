@@ -71,6 +71,8 @@ struct ImageBlockView: View {
                 maxSize: CGSize(width: 1200, height: 1000)
             )
         }
+        .imageSaveAffordance(saveRequest, isHovered: isHovered)
+        .imageSaveContextMenu(saveRequest)
         .contentShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
         .onTapGesture {
             guard !selectionNotificationsSuppressed else { return }
@@ -92,6 +94,11 @@ struct ImageBlockView: View {
         .task {
             loadImage()
         }
+    }
+
+    private var saveRequest: ImageSaveRequest? {
+        guard let path = block.metadata["imagePath"], !path.isEmpty else { return nil }
+        return ImageSaveRequest(.file(URL(fileURLWithPath: path)), title: block.metadata["title"])
     }
 
     private func loadImage() {

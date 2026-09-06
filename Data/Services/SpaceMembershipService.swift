@@ -144,3 +144,104 @@ extension SpaceMembershipService {
         notifyMembersChanged()
     }
 }
+
+/// A Space deletion changes membership separately from the underlying originals.
+/// Keep the exact affected IDs so undo never revives previously deleted items.
+enum SpaceDeletionService {
+    enum Contents: Sendable { case keep, delete }
+    struct Change: Sendable {
+        var deletedUUIDs: Set<String>
+        var membershipIDs: [String]
+        var promotedSpaces: [String: String]
+    }
+
+    static func delete(_ spaceID: String, contents: Contents, db: Database) throws -> Change {
+        let spaces = try Atom.filter(Column("type") == AtomType.thinkspace.rawValue)
+            .filter(Column("is_deleted") == false).fetchAll(db)
+        guard spaces.contains(where: { $0.uuid == spaceID }) else { throw SpaceCompositionError.notFound }
+        var spaceIDs: Set<String> = [spaceID]
+        if contents == .delete {
+            var previousCount = 0
+            while previousCount != spaceIDs.count {
+                previousCount = spaceIDs.count
+                for space in spaces {
+                    if let parent = space.metadataValue(as: ThinkspaceMetadata.self)?.parentThinkspaceId,
+                       spaceIDs.contains(parent) { spaceIDs.insert(space.uuid) }
+                }
+            }
+        }
+        var deleted = spaceIDs
+        if contents == .delete {
+            for id in spaceIDs {
+                deleted.formUnion(try String.fetchAll(db, sql: """
+                    SELECT DISTINCT b.entity_uuid FROM canvas_blocks b
+                    JOIN atoms a ON a.uuid = b.entity_uuid AND a.is_deleted = 0
+                    WHERE b.thinkspace_id = ? AND b.is_deleted = 0
+                    """, arguments: [id]))
+            }
+        }
+        let promoted = contents == .keep ? Dictionary(uniqueKeysWithValues: spaces.compactMap { atom -> (String, String)? in
+            guard atom.metadataValue(as: ThinkspaceMetadata.self)?.parentThinkspaceId == spaceID else { return nil }
+            return (atom.uuid, spaceID)
+        }) : [:]
+        // Include other placements of deleted originals, but never pre-existing tombstones.
+        var membershipIDs = Set<String>()
+        for id in spaceIDs {
+            membershipIDs.formUnion(try String.fetchAll(db, sql:
+                "SELECT id FROM canvas_blocks WHERE thinkspace_id = ? AND is_deleted = 0", arguments: [id]))
+        }
+        for id in deleted {
+            membershipIDs.formUnion(try String.fetchAll(db, sql:
+                "SELECT id FROM canvas_blocks WHERE entity_uuid = ? AND is_deleted = 0", arguments: [id]))
+        }
+        let change = Change(deletedUUIDs: deleted, membershipIDs: Array(membershipIDs), promotedSpaces: promoted)
+        try apply(change, undo: false, db: db)
+        return change
+    }
+
+    static func apply(_ change: Change, undo: Bool, db: Database) throws {
+        let now = ISO8601.string(from: Date())
+        for uuid in change.deletedUUIDs {
+            guard let atom = try Atom.filter(Column("uuid") == uuid).fetchOne(db) else { throw SpaceCompositionError.notFound }
+            if !undo { AtomRevisionWriter.snapshot(db, of: atom, source: .preDelete) }
+            let metadata = undo ? AtomRepository.metadataStampingRestoredAt(atom.metadata, restoredAt: now) : atom.metadata
+            try db.execute(sql: """
+                UPDATE atoms SET is_deleted = ?, metadata = ?, updated_at = ?,
+                    _local_version = _local_version + 1, _local_pending = 1 WHERE uuid = ?
+                """, arguments: [!undo, metadata ?? atom.metadata, now, uuid])
+        }
+        for (uuid, parent) in change.promotedSpaces {
+            guard let atom = try Atom.filter(Column("uuid") == uuid).fetchOne(db),
+                  var metadata = atom.metadataValue(as: ThinkspaceMetadata.self) else { throw SpaceCompositionError.notFound }
+            guard metadata.parentThinkspaceId == (undo ? nil : parent) else { throw SpaceCompositionError.conflict }
+            metadata.parentThinkspaceId = undo ? parent : nil
+            try db.execute(sql: """
+                UPDATE atoms SET metadata = ?, updated_at = ?, _local_version = _local_version + 1,
+                    _local_pending = 1 WHERE uuid = ?
+                """, arguments: [metadata.mergedJSON(into: atom.metadata), now, uuid])
+        }
+        for id in change.membershipIDs {
+            try db.execute(sql: """
+                UPDATE canvas_blocks SET is_deleted = ?, updated_at = ?,
+                    _local_version = COALESCE(_local_version, 0) + 1, _local_pending = 1 WHERE id = ?
+                """, arguments: [!undo, now, id])
+        }
+    }
+
+    @MainActor static func publish(_ change: Change, undo: Bool = false) async {
+        for uuid in change.deletedUUIDs.union(change.promotedSpaces.keys) {
+            if !undo && change.deletedUUIDs.contains(uuid) {
+                await ChangeTracker.shared.trackDelete(table: "atoms", uuid: uuid, rowId: nil)
+                try? await NodeGraphEngine.shared.handleAtomDeleted(atomUUID: uuid)
+                Task.detached(priority: .utility) { await RecallIndexer.shared.noteAtomDeleted(uuid) }
+            } else if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                await ChangeTracker.shared.trackUpdate(table: "atoms", entity: atom, skipVersionIncrement: true)
+                if undo { try? await NodeGraphEngine.shared.handleAtomCreated(atom) }
+                Task.detached(priority: .utility) { await RecallIndexer.shared.noteAtomChanged(atom) }
+            }
+        }
+        NotificationCenter.default.post(name: .atomsDidChange, object: nil)
+        NotificationCenter.default.post(name: SpaceCompositionService.didChange, object: nil)
+        SpaceMembershipService.notifyMembersChanged()
+    }
+}

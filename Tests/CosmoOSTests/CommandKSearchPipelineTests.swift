@@ -2818,38 +2818,35 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertTrue(source.contains("viewModel.state.currentStep.enablesPolishHighlights"))
     }
 
-    func testCreatorListFiltersUseCachedMetadataIndex() throws {
+    func testCreatorDirectoryFiltersUseTheBuiltSummaries() throws {
+        // The directory summarizes creators ONCE off the main actor; filtering
+        // and sorting never decode creator metadata in a body.
         let source = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/SwipeStudy/CreatorListView.swift"),
+            contentsOf: repositoryRoot.appendingPathComponent("UI/SwipeFile/Creators/CreatorDirectoryModel.swift"),
             encoding: .utf8
         )
-        let recomputeBody = try XCTUnwrap(
-            source.slice(from: "private func recomputeFilteredCreators()", to: "// MARK: - Creator Grid")
-        )
+        let filterBody = try XCTUnwrap(source.slice(from: "var filtered: [CreatorProfileSummary] {", to: "var catalogued:"))
 
-        XCTAssertTrue(source.contains("struct CreatorListIndexItem"))
-        XCTAssertTrue(source.contains("@State private var creatorIndex: [CreatorListIndexItem] = []"))
-        XCTAssertTrue(source.contains("CreatorListFiltering.buildIndex"))
-        XCTAssertTrue(source.contains("CreatorListFiltering.filteredCreators"))
-        XCTAssertTrue(source.contains("let filteredIDs = CreatorListFiltering.filteredIDs"))
-        XCTAssertFalse(recomputeBody.contains("metadataValue(as: CreatorMetadata.self)"))
+        XCTAssertTrue(source.contains("struct CreatorProfileSummary"))
+        XCTAssertTrue(source.contains("static func build(creators: [Atom], swipes: [Atom], catalogCounts: [String: Int])"))
+        XCTAssertTrue(source.contains("Task.detached(priority: .userInitiated)"))
+        XCTAssertFalse(filterBody.contains("metadataValue(as: CreatorMetadata.self)"))
+        XCTAssertFalse(filterBody.contains("swipeAnalysis"))
     }
 
-    func testCreatorProfileSwipeFiltersUseCachedAnalysisIndex() throws {
+    func testCreatorPageSavedLaneUsesTheLaneMemo() throws {
+        // The Saved lane filters and sorts through a memo keyed on the swipe
+        // rows — a body never touches swipeAnalysis.
         let source = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/SwipeStudy/CreatorProfileView.swift"),
+            contentsOf: repositoryRoot.appendingPathComponent("UI/SwipeFile/Creators/SwipeCreatorPage.swift"),
             encoding: .utf8
         )
-        let recomputeBody = try XCTUnwrap(
-            source.slice(from: "private func recomputeFilteredSwipes()", to: "// MARK: - Swipe Card")
-        )
+        let filteredBody = try XCTUnwrap(source.slice(from: "private var filteredSwipes: [Atom] {", to: "private func filteredCatalog("))
 
-        XCTAssertTrue(source.contains("struct CreatorSwipeIndexItem"))
-        XCTAssertTrue(source.contains("@State private var swipeIndex: [CreatorSwipeIndexItem] = []"))
-        XCTAssertTrue(source.contains("CreatorProfileSwipeFiltering.buildIndex"))
-        XCTAssertTrue(source.contains("CreatorProfileSwipeFiltering.filteredIDs"))
-        XCTAssertTrue(source.contains("CreatorProfileSwipeFiltering.filteredSwipes"))
-        XCTAssertFalse(recomputeBody.contains("swipeAnalysis"))
+        XCTAssertTrue(source.contains("final class CreatorLaneMemo"))
+        XCTAssertTrue(source.contains("@State private var laneMemo = CreatorLaneMemo()"))
+        XCTAssertTrue(filteredBody.contains("laneMemo.swipes("))
+        XCTAssertFalse(filteredBody.contains("swipeAnalysis"))
     }
 
     @MainActor

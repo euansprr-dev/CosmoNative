@@ -151,7 +151,17 @@ final class CosmoClipView: NSClipView {
 // MARK: - Custom NSTextView
 
 /// Carries a right-click resize choice from an NSMenuItem back to the coordinator.
-private final class ImageResizePresetPayload: NSObject {
+private /// Menu payload for the image save verbs (path is the ImageStore file).
+final class ImageSaveMenuPayload: NSObject {
+    let path: String
+    let action: ImageSaveAction
+    init(path: String, action: ImageSaveAction) {
+        self.path = path
+        self.action = action
+    }
+}
+
+final class ImageResizePresetPayload: NSObject {
     let charIndex: Int
     let width: CGFloat?
     init(charIndex: Int, width: CGFloat?) {
@@ -926,8 +936,9 @@ final class CosmoTextView: NSTextView {
     /// Hit-tests an inline image attachment. Returns the attachment's character range
     /// (length 1) when the click lands on the image itself, so the caller can select it and
     /// reveal the resize handles. Nil for any other click.
-    fileprivate func imageAttachmentHit(at point: NSPoint) -> NSRange? {
-        guard isEditable, let layoutManager, let textContainer, let textStorage else { return nil }
+    fileprivate func imageAttachmentHit(at point: NSPoint, requireEditable: Bool = true) -> NSRange? {
+        if requireEditable, !isEditable { return nil }
+        guard let layoutManager, let textContainer, let textStorage else { return nil }
         // No attachments ⇒ no hit — skips the glyph/attribute queries on the
         // per-click path for ordinary text rows.
         guard textStorage.containsAttachments else { return nil }
@@ -944,26 +955,62 @@ final class CosmoTextView: NSTextView {
               attributes[RichDocumentAttributeKeys.imagePath] != nil else { return nil }
 
         // glyphIndex(for:) snaps to the nearest glyph — confirm the click is inside it.
+        guard let rect = imageAttachmentRect(charIndex: charIndex), rect.contains(point) else { return nil }
+
+        return NSRange(location: charIndex, length: 1)
+    }
+
+    /// The attachment glyph's rect in view coordinates (text-container inset applied).
+    fileprivate func imageAttachmentRect(charIndex: Int) -> NSRect? {
+        guard let layoutManager, let textContainer else { return nil }
         let glyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: charIndex, length: 1), actualCharacterRange: nil)
         var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
         rect.origin.x += textContainerInset.width
         rect.origin.y += textContainerInset.height
-        guard rect.contains(point) else { return nil }
-
-        return NSRange(location: charIndex, length: 1)
+        return rect
     }
 
     /// The text view's own menu (image presets, AppKit defaults) — the table
     /// cell override prepends its actions to this.
     private func standardMenu(for event: NSEvent) -> NSMenu? {
         let localPoint = convert(event.locationInWindow, from: nil)
-        if isEditable, onImageResizePreset != nil, let range = imageAttachmentHit(at: localPoint) {
-            return imageResizeMenu(charIndex: range.location)
+        if let range = imageAttachmentHit(at: localPoint, requireEditable: false) {
+            let menu = NSMenu()
+            appendImageSaveItems(to: menu, charIndex: range.location)
+            if isEditable, onImageResizePreset != nil {
+                menu.addItem(.separator())
+                appendImageResizeItems(to: menu, charIndex: range.location)
+            }
+            return menu
         }
         return super.menu(for: event)
     }
 
-    private func imageResizeMenu(charIndex: Int) -> NSMenu {
+    /// Save to Downloads / Save As… / Copy Image — the same verbs as the
+    /// hover pill, reachable on any image (read-only rows included).
+    private func appendImageSaveItems(to menu: NSMenu, charIndex: Int) {
+        guard let storage = textStorage, charIndex < storage.length,
+              let path = storage.attribute(RichDocumentAttributeKeys.imagePath, at: charIndex, effectiveRange: nil) as? String,
+              !path.isEmpty else { return }
+        let verbs: [(String, ImageSaveAction)] = [
+            ("Save to Downloads", .downloads),
+            ("Save As…", .saveAs),
+            ("Copy Image", .copy)
+        ]
+        for (title, action) in verbs {
+            let item = NSMenuItem(title: title, action: #selector(handleImageSaveMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ImageSaveMenuPayload(path: path, action: action)
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func handleImageSaveMenu(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? ImageSaveMenuPayload else { return }
+        ImageSaveActions.perform(payload.action, request: ImageSaveRequest(.file(URL(fileURLWithPath: payload.path))))
+    }
+
+    private func appendImageResizeItems(to menu: NSMenu, charIndex: Int) {
         let intrinsic = imageIntrinsicSize(at: charIndex)
         let maxWidth = max(ImageResizeMath.minWidth, bounds.width - 2 * textContainerInset.width)
         let presets: [(String, CGFloat?)] = [
@@ -973,7 +1020,6 @@ final class CosmoTextView: NSTextView {
             ("Fit width", maxWidth),
             ("", nil)   // separator marker
         ]
-        let menu = NSMenu()
         for (title, rawWidth) in presets {
             guard !title.isEmpty else { menu.addItem(.separator()); continue }
             let item = NSMenuItem(title: title, action: #selector(handleImageResizeMenu(_:)), keyEquivalent: "")
@@ -986,7 +1032,6 @@ final class CosmoTextView: NSTextView {
         reset.target = self
         reset.representedObject = ImageResizePresetPayload(charIndex: charIndex, width: nil)
         menu.addItem(reset)
-        return menu
     }
 
     private func imageIntrinsicSize(at charIndex: Int) -> CGSize {
@@ -1009,7 +1054,7 @@ final class CosmoTextView: NSTextView {
         }
         let trackingArea = NSTrackingArea(
             rect: .zero,
-            options: [.activeAlways, .inVisibleRect, .mouseMoved, .cursorUpdate],
+            options: [.activeAlways, .inVisibleRect, .mouseMoved, .mouseEnteredAndExited, .cursorUpdate],
             owner: self,
             userInfo: nil
         )
@@ -1032,6 +1077,7 @@ final class CosmoTextView: NSTextView {
 
     override func mouseMoved(with event: NSEvent) {
         let localPoint = convert(event.locationInWindow, from: nil)
+        updateImageSaveHover(at: localPoint)
         if updateDisclosureCursor(at: localPoint) {
             return
         }
@@ -1040,6 +1086,70 @@ final class CosmoTextView: NSTextView {
             return
         }
         super.mouseMoved(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        imageSaveLastPoint = nil
+        dismissImageSaveHover()
+        super.mouseExited(with: event)
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        // Layout is about to move; the pill's attachment may not even exist.
+        dismissImageSaveHover(force: true)
+    }
+
+    // MARK: - Image save hover pill
+
+    /// The glass save pill floating over the inline image under the pointer
+    /// (SwiftUI-hosted; see ImageSaveAffordance.swift). One at a time,
+    /// positioned bottom-trailing inside the attachment's glyph rect, kept
+    /// alive through its own saved/failed feedback.
+    private var imageSaveHost: ImageSaveHostingView?
+    private var imageSaveCharIndex: Int?
+    private var imageSaveLastPoint: NSPoint?
+
+    private func updateImageSaveHover(at point: NSPoint) {
+        imageSaveLastPoint = point
+        guard let range = imageAttachmentHit(at: point, requireEditable: false),
+              let rect = imageAttachmentRect(charIndex: range.location) else {
+            dismissImageSaveHover()
+            return
+        }
+        if imageSaveHost == nil || imageSaveCharIndex != range.location {
+            // Never swap the pill out from under its own feedback.
+            if imageSaveHost?.isBusy == true { return }
+            dismissImageSaveHover(force: true)
+            guard let path = textStorage?.attribute(RichDocumentAttributeKeys.imagePath, at: range.location, effectiveRange: nil) as? String,
+                  !path.isEmpty else { return }
+            let request = ImageSaveRequest(.file(URL(fileURLWithPath: path)))
+            let pill = ImageSaveFloatingPill(request: request) { [weak self] busy in
+                guard let self else { return }
+                self.imageSaveHost?.isBusy = busy
+                // Feedback finished with the pointer already elsewhere: settle.
+                if !busy, let last = self.imageSaveLastPoint {
+                    self.updateImageSaveHover(at: last)
+                } else if !busy {
+                    self.dismissImageSaveHover()
+                }
+            }
+            let host = ImageSaveHostingView(rootView: pill)
+            addSubview(host)
+            imageSaveHost = host
+            imageSaveCharIndex = range.location
+        }
+        let side = ImageSaveHostingView.side
+        let inset = ImageSaveHostingView.inset
+        imageSaveHost?.frame = NSRect(x: rect.maxX - inset - side, y: rect.maxY - inset - side, width: side, height: side)
+    }
+
+    private func dismissImageSaveHover(force: Bool = false) {
+        guard let host = imageSaveHost else { return }
+        guard force || !host.isBusy else { return }
+        host.removeFromSuperview()
+        imageSaveHost = nil
+        imageSaveCharIndex = nil
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -1086,9 +1196,16 @@ final class CosmoTextView: NSTextView {
         }
 
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        // The window's key-equivalent traversal hands ⌘-keys to EVERY
+        // CosmoTextView in the window (a Page mounts the title plus one view
+        // per hydrated block row), in hierarchy order — not to the first
+        // responder. A bystander that claims ⌘B applies bold to its own
+        // collapsed selection (invisible) and swallows the event before the
+        // focused row ever sees it. Only the focused editor answers.
+        let isFocusedEditor = window?.firstResponder === self
 
         // Block manipulation: ⌥⌘↑/↓ move the row, ⌥⌘1–3 toggle headings.
-        if flags == [.command, .option] {
+        if flags == [.command, .option], isFocusedEditor {
             switch event.keyCode {
             case 126: // ↑
                 if shortcutDelegate?.textViewDidRequestBlockShortcut(.moveUp) == true { return true }
@@ -1107,21 +1224,39 @@ final class CosmoTextView: NSTextView {
         // ⇧⌘L — checklist toggle (the handle menu's To-do, from the keyboard).
         if flags == [.command, .shift],
            event.charactersIgnoringModifiers?.lowercased() == "l",
+           isFocusedEditor,
            shortcutDelegate?.textViewDidRequestBlockShortcut(.checklistToggle) == true {
+            return true
+        }
+
+        // ⌘] / ⌘[ — nest / un-nest a list item (Tab / ⇧Tab from the menu
+        // bar's point of view, the Docs pairing). Only list rows answer; the
+        // trail's ⌘[ / ⌘] already yield while text input is focused.
+        if flags == .command, isFocusedEditor, event.keyCode == 30 || event.keyCode == 33,
+           shortcutDelegate?.textViewDidRequestBlockShortcut(event.keyCode == 30 ? .indent : .outdent) == true {
             return true
         }
 
         // ⇧⌘H — highlight with the last-used tone (any editor).
         if flags == [.command, .shift],
            event.charactersIgnoringModifiers?.lowercased() == "h",
-           window?.firstResponder === self {
+           isFocusedEditor {
             EditorCommandBus.shared.toggleLastHighlight()
+            return true
+        }
+
+        // ⇧⌘X — strikethrough (the quill bar's glyph, from the keyboard;
+        // ⇧⌘S belongs to swipe capture app-wide).
+        if flags == [.command, .shift],
+           event.charactersIgnoringModifiers?.lowercased() == "x",
+           isFocusedEditor {
+            shortcutDelegate?.textViewDidRequestFormattingShortcut(.strikethrough)
             return true
         }
 
         // Table cells: ⌘Return adds a row, ⌥⌘←/→ move the column,
         // ⇧⌘M / ⇧⌘U merge / unmerge, ⌥⌘T opens the table options.
-        if tableCellMode {
+        if tableCellMode, isFocusedEditor {
             if flags == .command, event.keyCode == 36,
                shortcutDelegate?.textViewDidRequestBlockShortcut(.tableAddRowBelow) == true {
                 return true
@@ -1139,7 +1274,10 @@ final class CosmoTextView: NSTextView {
             }
         }
 
+        // Bystanders defer here: returning super (false) lets the traversal
+        // continue to the focused editor instead of swallowing the key.
         guard flags == .command,
+              isFocusedEditor,
               let chars = event.charactersIgnoringModifiers?.lowercased() else {
             return super.performKeyEquivalent(with: event)
         }
@@ -2519,6 +2657,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             case bulletList
             case numberedList
             case checklist
+
+            /// The three nestable kinds — Tab / ⇧Tab answer only here.
+            var isListMode: Bool {
+                self == .bulletList || self == .numberedList || self == .checklist
+            }
         }
         private var activeBlockMode: ActiveBlockMode = .none
         private var hasAppliedHighlights = false
@@ -3383,15 +3526,18 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let lineText = (textView.string as NSString).substring(with: lineRange)
             if lineText.hasPrefix("│ ") {
                 activeBlockMode = .quote
-            } else if lineText.hasPrefix("• ") {
+            } else if RichListIndent.bulletPrefixLength(in: lineText) > 0 {
                 activeBlockMode = .bulletList
             } else if lineText.hasPrefix("☐ ") || lineText.hasPrefix("☑ ") {
                 activeBlockMode = .checklist
-            } else if lineText.first?.isNumber == true,
-                      lineText.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil {
-                // Digit guard first: String.range(of:.regularExpression)
-                // compiles a fresh NSRegularExpression per call, and this
-                // runs on EVERY selection change (every keystroke + click).
+            } else if let first = lineText.first, first.isNumber || first.isLowercase,
+                      RichListIndent.numberedPrefixLength(
+                        in: lineText,
+                        allowsAlpha: nestedNumberingAllowsAlpha(lineRange: lineRange, in: textView)
+                      ) > 0 {
+                // Cheap first-character guard: this runs on EVERY selection
+                // change (every keystroke + click), and letter labels only
+                // exist on nested lines, which the attribute lookup confirms.
                 activeBlockMode = .numberedList
             } else {
                 activeBlockMode = .none
@@ -3752,6 +3898,14 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
                 // Block continuation: quotes, bullets, numbered lists, checklists
                 if activeBlockMode != .none {
+                    if isEmptyBlockLine(in: textView),
+                       activeBlockMode.isListMode,
+                       currentLineListLevel(in: textView) > 0 {
+                        // Empty NESTED item: climb one level first (the Docs
+                        // rhythm) — only the margin press leaves the list.
+                        adjustListIndent(deeper: false, in: textView)
+                        return true
+                    }
                     if isEmptyBlockLine(in: textView) {
                         // Empty block line → exit block mode, remove prefix
                         let lineRange = currentLineRange(in: textView)
@@ -3800,6 +3954,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if commandSelector == #selector(NSResponder.insertTab(_:)) &&
                 (parent.singleLine || parent.titleConfiguration != nil) {
                 return true
+            }
+
+            if let handled = handleListIndentCommand(commandSelector, in: textView) {
+                return handled
             }
 
             return false
@@ -3870,19 +4028,17 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             switch activeBlockMode {
             case .none: return nil
             case .quote: return "│ "
-            case .bulletList: return "• "
+            case .bulletList:
+                // The new line inherits the level (typing attributes carry
+                // it), so it takes the level's glyph.
+                return RichListIndent.bulletPrefix(level: currentLineListLevel(in: textView))
             case .checklist: return "☐ "
             case .numberedList:
                 let lineRange = currentLineRange(in: textView)
                 let lineText = (textView.string as NSString).substring(with: lineRange)
-                if let match = lineText.range(of: #"^(\d+)\."#, options: .regularExpression) {
-                    let numStr = String(lineText[match])
-                        .replacingOccurrences(of: ".", with: "")
-                    if let num = Int(numStr) {
-                        return "\(num + 1). "
-                    }
-                }
-                return "1. "
+                let level = currentLineListLevel(in: textView)
+                let position = RichListIndent.numberedPosition(in: lineText, level: level) ?? 0
+                return RichListIndent.numberedPrefix(position: position + 1, level: level)
             }
         }
 
@@ -3893,9 +4049,18 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             switch activeBlockMode {
             case .none: return false
             case .quote: return trimmed == "│" || trimmed == "│ "
-            case .bulletList: return trimmed == "•" || trimmed == "• "
+            case .bulletList:
+                return RichListIndent.bulletGlyphs.contains { trimmed == $0 || trimmed == $0 + " " }
             case .checklist: return trimmed == "☐" || trimmed == "☐ " || trimmed == "☑" || trimmed == "☑ "
-            case .numberedList: return trimmed.range(of: #"^\d+\.\s*$"#, options: .regularExpression) != nil
+            case .numberedList:
+                // "1." / "1. " / "b. " / "iv. " and nothing else on the line.
+                let padded = trimmed.hasSuffix(" ") ? trimmed : trimmed + " "
+                let level = currentLineListLevel(in: textView)
+                let prefixLength = RichListIndent.numberedPrefixLength(
+                    in: padded,
+                    allowsAlpha: RichListIndent.numberingStyle(level: level) != .decimal
+                )
+                return prefixLength > 0 && prefixLength == padded.utf16.count
             }
         }
 
@@ -3905,14 +4070,262 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             switch activeBlockMode {
             case .none: return 0
             case .quote: return lineText.hasPrefix("│ ") ? 2 : 1
-            case .bulletList: return lineText.hasPrefix("• ") ? 2 : 1
+            case .bulletList:
+                let length = RichListIndent.bulletPrefixLength(in: lineText)
+                return length > 0 ? length : 1
             case .checklist: return (lineText.hasPrefix("☐ ") || lineText.hasPrefix("☑ ")) ? 2 : 1
             case .numberedList:
-                if let match = lineText.range(of: #"^\d+\.\s"#, options: .regularExpression) {
-                    return lineText.distance(from: lineText.startIndex, to: match.upperBound)
-                }
-                return 0
+                let level = currentLineListLevel(in: textView)
+                return RichListIndent.numberedPrefixLength(
+                    in: lineText,
+                    allowsAlpha: RichListIndent.numberingStyle(level: level) != .decimal
+                )
             }
+        }
+
+        // MARK: - List Nesting (Tab / ⇧Tab)
+
+        /// Tab / ⇧Tab. Block rows hand a LIST row's move to the host
+        /// (BlockOperations owns structure; the row insets itself); the
+        /// continuous editor moves the line — with its subtree — inside the
+        /// storage. Prose keeps AppKit's default (a literal tab). Returns nil
+        /// when the selector isn't Tab / ⇧Tab or the line isn't ours.
+        private func handleListIndentCommand(_ selector: Selector, in textView: NSTextView) -> Bool? {
+            let deeper: Bool
+            if selector == #selector(NSResponder.insertTab(_:)) {
+                deeper = true
+            } else if selector == #selector(NSResponder.insertBacktab(_:)) {
+                deeper = false
+            } else {
+                return nil
+            }
+            guard !parent.singleLine, parent.titleConfiguration == nil else { return nil }
+            if parent.splitsOnReturn {
+                guard parent.rowBlockKind?.supportsListIndent == true else { return nil }
+                // The host re-serializes the row with the new glyph — suppress
+                // the stale write-back exactly like split/merge. A capped move
+                // (first item, already at the margin) reports false: nothing
+                // external is coming, but Tab is still consumed — a literal
+                // tab must never land in a list row.
+                beginAwaitingExternalContent()
+                let moved = parent.onBoundaryCommand?(
+                    .indentListBlock(deeper: deeper, livePlainText: textView.string)
+                ) == true
+                if !moved { cancelAwaitingExternalContent() }
+                return true
+            }
+            guard activeBlockMode.isListMode else { return nil }
+            adjustListIndent(deeper: deeper, in: textView)
+            return true
+        }
+
+        /// The stored nesting level of the caret's line (continuous editor).
+        private func currentLineListLevel(in textView: NSTextView) -> Int {
+            guard let storage = textView.textStorage else { return 0 }
+            let lineRange = currentLineRange(in: textView)
+            return listIndentLevel(ofLineAt: lineRange.location, in: storage)
+        }
+
+        private func listIndentLevel(ofLineAt location: Int, in storage: NSTextStorage) -> Int {
+            guard storage.length > 0 else { return 0 }
+            let index = min(max(0, location), storage.length - 1)
+            let value = storage.attribute(RichDocumentAttributeKeys.listIndent, at: index, effectiveRange: nil)
+            if let level = value as? Int { return RichListIndent.clamped(level) }
+            if let number = value as? NSNumber { return RichListIndent.clamped(number.intValue) }
+            return 0
+        }
+
+        /// Letter labels ("b. ", "iv. ") only count as numbering on lines
+        /// whose stored level renders them — prose starting "e. " stays prose.
+        private func nestedNumberingAllowsAlpha(lineRange: NSRange, in textView: NSTextView) -> Bool {
+            guard let storage = textView.textStorage else { return false }
+            let level = listIndentLevel(ofLineAt: lineRange.location, in: storage)
+            return RichListIndent.numberingStyle(level: level) != .decimal
+        }
+
+        /// A line's list shape as the continuous editor sees it.
+        private struct ListLineShape {
+            var range: NSRange
+            var kind: RichBlockKind?
+            var level: Int
+            var prefixLength: Int
+
+            var isList: Bool { kind != nil }
+        }
+
+        private func listLineShape(lineRange: NSRange, in storage: NSTextStorage) -> ListLineShape {
+            let text = (storage.string as NSString).substring(with: lineRange)
+            let level = lineRange.length > 0 ? listIndentLevel(ofLineAt: lineRange.location, in: storage) : 0
+            let bullet = RichListIndent.bulletPrefixLength(in: text)
+            if bullet > 0 {
+                return ListLineShape(range: lineRange, kind: .bulletList, level: level, prefixLength: bullet)
+            }
+            if text.hasPrefix("☐ ") || text.hasPrefix("☑ ") {
+                return ListLineShape(range: lineRange, kind: .checklist, level: level, prefixLength: 2)
+            }
+            let numbered = RichListIndent.numberedPrefixLength(
+                in: text,
+                allowsAlpha: RichListIndent.numberingStyle(level: level) != .decimal
+            )
+            if numbered > 0 {
+                return ListLineShape(range: lineRange, kind: .numberedList, level: level, prefixLength: numbered)
+            }
+            return ListLineShape(range: lineRange, kind: nil, level: 0, prefixLength: 0)
+        }
+
+        /// The hard-newline line (newline excluded) containing `location`.
+        private func lineRangeExcludingNewline(at location: Int, in string: NSString) -> NSRange {
+            let clamped = min(max(0, location), string.length)
+            return trimmingTrailingNewline(from: string.lineRange(for: NSRange(location: clamped, length: 0)), in: string)
+        }
+
+        /// Tab / ⇧Tab in the continuous editor: move the caret's list line
+        /// and its subtree one level, re-glyph the bullets, renumber the run,
+        /// and inset the paragraphs — as ONE undoable replacement of the
+        /// affected lines. Deeper is capped one past the list line above
+        /// (`RichListIndent.maxIndentLevel`'s rule); shallower stops at the
+        /// margin. A capped move is a silent no-op.
+        private func adjustListIndent(deeper: Bool, in textView: NSTextView) {
+            guard let storage = textView.textStorage else { return }
+            let string = storage.string as NSString
+            let selection = textView.selectedRange()
+            let currentRange = lineRangeExcludingNewline(at: selection.location, in: string)
+            let current = listLineShape(lineRange: currentRange, in: storage)
+            guard current.isList else { return }
+
+            // The contiguous run of list lines around the caret: lines above
+            // seed the numbering, lines below may renumber or move.
+            var run: [ListLineShape] = [current]
+            var cursor = currentRange.location
+            while cursor > 0 {
+                let above = lineRangeExcludingNewline(at: cursor - 1, in: string)
+                let shape = listLineShape(lineRange: above, in: storage)
+                guard shape.isList else { break }
+                run.insert(shape, at: 0)
+                cursor = above.location
+            }
+            let currentIndex = run.count - 1
+            // Past the caret line's newline, one line at a time; an empty or
+            // prose line ends the run.
+            var next = NSMaxRange(currentRange) + 1
+            while next < string.length {
+                let below = lineRangeExcludingNewline(at: next, in: string)
+                let shape = listLineShape(lineRange: below, in: storage)
+                guard shape.isList else { break }
+                run.append(shape)
+                next = NSMaxRange(below) + 1
+            }
+
+            let target: Int
+            if deeper {
+                let cap = currentIndex > 0 ? RichListIndent.clamped(run[currentIndex - 1].level + 1) : 0
+                target = min(current.level + 1, cap)
+            } else {
+                target = max(0, current.level - 1)
+            }
+            guard target != current.level else { return }
+            let delta = target - current.level
+
+            // New levels: the caret's line and the deeper lines right below it.
+            var levels = run.map(\.level)
+            levels[currentIndex] = target
+            var subtreeEnd = currentIndex + 1
+            while subtreeEnd < run.count, run[subtreeEnd].level > current.level {
+                levels[subtreeEnd] = RichListIndent.clamped(run[subtreeEnd].level + delta)
+                subtreeEnd += 1
+            }
+
+            let ordinals = RichListIndent.numberedOrdinals(for: run.enumerated().map { index, shape in
+                RichBlock(kind: shape.kind ?? .paragraph, indent: levels[index])
+            })
+
+            // Rebuild the affected lines (caret line → end of run) in a copy.
+            let affected = NSRange(
+                location: currentRange.location,
+                length: NSMaxRange(run[run.count - 1].range) - currentRange.location
+            )
+            let rebuilt = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: affected))
+            var caretLineLengthAfter = currentRange.length
+            for index in stride(from: run.count - 1, through: currentIndex, by: -1) {
+                let shape = run[index]
+                let level = levels[index]
+                var localRange = NSRange(location: shape.range.location - affected.location, length: shape.range.length)
+
+                // Prefix: bullets take the level's glyph, numbered lines their
+                // recomputed label; to-do boxes stay as they are.
+                var expectedPrefix: String?
+                switch shape.kind {
+                case .bulletList: expectedPrefix = RichListIndent.bulletPrefix(level: level)
+                case .numberedList: expectedPrefix = RichListIndent.numberedPrefix(position: ordinals[index] + 1, level: level)
+                default: expectedPrefix = nil
+                }
+                if let expectedPrefix {
+                    let existing = (rebuilt.string as NSString).substring(with: NSRange(location: localRange.location, length: shape.prefixLength))
+                    if existing != expectedPrefix {
+                        rebuilt.replaceCharacters(
+                            in: NSRange(location: localRange.location, length: shape.prefixLength),
+                            with: expectedPrefix
+                        )
+                        localRange.length += expectedPrefix.utf16.count - shape.prefixLength
+                    }
+                }
+
+                // Level attribute + paragraph inset on the whole line.
+                if localRange.length > 0 {
+                    if level > 0 {
+                        rebuilt.addAttribute(RichDocumentAttributeKeys.listIndent, value: level, range: localRange)
+                    } else {
+                        rebuilt.removeAttribute(RichDocumentAttributeKeys.listIndent, range: localRange)
+                    }
+                    let inset = CGFloat(level) * RichListIndent.insetPerLevel
+                    rebuilt.enumerateAttribute(.paragraphStyle, in: localRange, options: []) { value, subRange, _ in
+                        let base = (value as? NSParagraphStyle) ?? self.defaultParagraphStyle()
+                        guard let updated = base.mutableCopy() as? NSMutableParagraphStyle else { return }
+                        updated.firstLineHeadIndent = inset
+                        updated.headIndent = inset
+                        rebuilt.addAttribute(.paragraphStyle, value: updated, range: subRange)
+                    }
+                }
+                if index == currentIndex { caretLineLengthAfter = localRange.length }
+            }
+
+            guard textView.shouldChangeText(in: affected, replacementString: rebuilt.string) else { return }
+            isApplyingStructuralEdit = true
+            storage.replaceCharacters(in: affected, with: rebuilt)
+            isApplyingStructuralEdit = false
+            textView.didChangeText()
+
+            // Caret: same offset from the END of its line, never inside the
+            // new prefix.
+            let caretFromEnd = max(0, NSMaxRange(currentRange) - selection.location)
+            let newLineEnd = currentRange.location + caretLineLengthAfter
+            let newPrefixLength = listLineShape(
+                lineRange: NSRange(location: currentRange.location, length: caretLineLengthAfter),
+                in: storage
+            ).prefixLength
+            let caret = max(currentRange.location + newPrefixLength, newLineEnd - caretFromEnd)
+            textView.setSelectedRange(NSRange(location: min(caret, storage.length), length: 0))
+
+            // Continued typing keeps the level.
+            var attributes = textView.typingAttributes
+            if target > 0 {
+                attributes[RichDocumentAttributeKeys.listIndent] = target
+            } else {
+                attributes.removeValue(forKey: RichDocumentAttributeKeys.listIndent)
+            }
+            if let style = (attributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle {
+                style.firstLineHeadIndent = CGFloat(target) * RichListIndent.insetPerLevel
+                style.headIndent = style.firstLineHeadIndent
+                attributes[.paragraphStyle] = style
+            }
+            textView.typingAttributes = attributes
+
+            if let container = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: container)
+            }
+            textView.sizeToFit()
+            syncBindings(from: textView)
+            notifyContentHeightChange(for: textView)
         }
 
         private func collapsedHeadingLineRangeContainingSelection(in textView: NSTextView) -> NSRange? {

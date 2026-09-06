@@ -411,10 +411,29 @@ struct ConceptMediaTile: View {
                 .animation(ProMotionSprings.hover, value: isHovered)
         }
         .buttonStyle(.plain)
+        // Sibling of the tile button (never inside its label) so the pill's
+        // click can't double as an open.
+        .imageSaveAffordance(saveRequest, isHovered: isHovered, inset: 8)
         .onHover { isHovered = $0 }
         .contextMenu { contextMenu }
         .help(tileTitle)
         .accessibilityLabel("Open \(tileTitle)")
+    }
+
+    /// Stills only: the owned original when this concept holds the file,
+    /// else the cloud mirror, else the source atom's media.
+    private var saveRequest: ImageSaveRequest? {
+        guard item.kind == .image else { return nil }
+        if let path = item.assetPath, !MediaAssetStore.isVideoPath(path), FileManager.default.fileExists(atPath: path) {
+            return ImageSaveRequest(.file(URL(fileURLWithPath: path)), title: item.assetTitle ?? tileTitle)
+        }
+        if let remote = item.assetRemoteURL, let url = URL(string: remote) {
+            return ImageSaveRequest(.remote(url), title: item.assetTitle ?? tileTitle)
+        }
+        if let atom, let url = ConceptMediaThumbnailResolver.thumbnailURL(for: atom) {
+            return ImageSaveRequest(.remote(url), title: tileTitle)
+        }
+        return nil
     }
 
     private var tileTitle: String {
@@ -534,6 +553,10 @@ struct ConceptMediaTile: View {
 
     @ViewBuilder
     private var contextMenu: some View {
+        if let saveRequest {
+            ImageSaveMenuItems(request: saveRequest)
+            Divider()
+        }
         Button("Open") { actions.onOpenMedia(item.id) }
         if let atomUUID = item.atomUUID {
             Button("Open as Pane") { actions.onOpenMediaAsPane(atomUUID) }

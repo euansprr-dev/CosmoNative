@@ -60,6 +60,21 @@ enum CodexOutlineEditing {
         renumberSlides(in: &outline)
         return true
     }
+
+    /// Carry a slide to an arbitrary slot — the drag-and-drop reorder. Unlike
+    /// `moveSlide(_:offset:)` (a neighbour swap), everything between the old
+    /// and new slots shifts by one, which is what a dragged row visibly did on
+    /// its way there. Returns false when nothing changes.
+    @discardableResult
+    static func moveSlide(_ slideID: UUID, toSlot slot: Int, in outline: inout CodexOutlineModel) -> Bool {
+        guard let index = outline.slides.firstIndex(where: { $0.id == slideID }),
+              outline.slides.indices.contains(slot),
+              index != slot else { return false }
+        let slide = outline.slides.remove(at: index)
+        outline.slides.insert(slide, at: slot)
+        renumberSlides(in: &outline)
+        return true
+    }
 }
 
 /// Pure splice computation for "Insert into post": places an outline item's

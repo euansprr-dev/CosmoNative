@@ -166,6 +166,20 @@ final class InboxViewModel {
     /// lane). The view applies it and clears it.
     var pendingRoute: SidebarInboxRoute?
 
+    /// Growing seedlings across every scope, ripest first — the manual
+    /// "Grow a concept" path the queue never had (G always started a NEW
+    /// seed named after the capture). Refreshed on start, on visibility,
+    /// and after every grow verb.
+    private(set) var seedlings: [Seedling] = []
+
+    private func refreshSeedlings() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let growing = (try? await SeedlingRepository.shared.fetchGrowingAllScopes(limit: 40)) ?? []
+            if growing != self.seedlings { self.seedlings = growing }
+        }
+    }
+
     /// Every Space that can host an inquiry session, sidebar order.
     var inquirySpaces: [InquirySpaceOption] {
         ThinkspaceManager.shared.thinkspaces
@@ -227,6 +241,7 @@ final class InboxViewModel {
             applyItems(inboxRepo.items)
             InboxIngestService.shared.runAtlasSweepIfNeeded()
             loadEmptyStateData()
+            refreshSeedlings()
         }
     }
 
@@ -256,6 +271,7 @@ final class InboxViewModel {
         startObserving()
         refreshFlowAvailability()
         refreshLanes()
+        refreshSeedlings()
     }
 
     private func refreshFlowAvailability() {
@@ -741,6 +757,68 @@ final class InboxViewModel {
         }
     }
 
+    /// Lane → lane: the ledger row's routing changes and the lane's recency
+    /// bumps. Undo puts the row back exactly where it was.
+    private func moveLaneCapture(_ item: InboxItem, to lane: CaptureDestination) async {
+        let repo = CapturedItemRepository.shared
+        guard let row = try? await repo.fetch(uuid: item.uuid) else {
+            presentErrorToast("That capture is no longer in a lane.")
+            return
+        }
+        guard row.captureDestinationId != lane.uuid else {
+            presentErrorToast("Already in \(lane.name).")
+            return
+        }
+        do {
+            try await Self.reroute(row, toLane: lane.uuid, intent: "lane_move")
+            await destinationRepo.markUsed(uuid: lane.uuid)
+            showOverrideSheet = false
+            NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
+            let original = row
+            let laneID = lane.uuid
+            CosmoUndoManager.shared.register(
+                InlineUndoAction(actionDescription: "Move Capture to Lane") {
+                    try? await Self.reroute(original, toLane: original.captureDestinationId, intent: original.parsedIntent ?? "lane_move")
+                    NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
+                } redo: {
+                    try? await Self.reroute(original, toLane: laneID, intent: "lane_move")
+                    NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
+                }
+            )
+            presentToast(
+                message: "Moved to \(lane.name)",
+                isError: false,
+                actionLabel: "Open",
+                action: { [weak self] in
+                    self?.dismissUndoToast()
+                    self?.pendingRoute = .captureLane(id: laneID)
+                }
+            )
+            recordRoutingOutcome(for: item, chosenKind: "lane", chosenLabel: lane.name, countsAsOverride: false)
+        } catch {
+            print("⚠️ [InboxVM] Lane move failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.moveLaneCapture", detail: error.localizedDescription)
+            presentErrorToast("Couldn't move that capture — it's still in its lane.")
+        }
+    }
+
+    /// A routing flip that keeps every other field as the row has it.
+    private static func reroute(_ row: CapturedItem, toLane laneID: String?, intent: String) async throws {
+        try await CapturedItemRepository.shared.updateRouting(
+            uuid: row.uuid,
+            destinationId: laneID,
+            parsedCommand: row.parsedCommand,
+            parsedIntent: intent,
+            confidence: row.routingConfidence,
+            status: row.status,
+            createdObjectIds: row.createdObjectIds,
+            parentDeepDiveId: row.parentDeepDiveId,
+            parentInquirySessionId: row.parentInquirySessionId,
+            parentQuestionId: row.parentQuestionId,
+            parentProjectId: row.parentProjectId
+        )
+    }
+
     /// The A key — no Space named yet, so the destination sheet opens on
     /// its inquiry section.
     func askInDeepDive(_ item: InboxItem) async {
@@ -789,6 +867,14 @@ final class InboxViewModel {
         guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
+        // A capture already at rest in a lane moves lane → lane: its ledger
+        // row is re-routed, nothing is created. The lane page's inspector and
+        // the destination sheet both land here, whichever model hosts them.
+        if item.captureReference.kind == .lane {
+            await moveLaneCapture(item, to: lane)
+            return
+        }
+
         do {
             _ = try await executor.executeRouteToLane(item: item, lane: lane)
             showOverrideSheet = false
@@ -828,10 +914,50 @@ final class InboxViewModel {
         }
     }
 
-    /// G — manual grow: the thought becomes (or feeds, when a live seedling
-    /// already carries its concept key) a seedling in the nursery. No atom,
-    /// no canvas object, no premature page.
+    /// G — grow a concept. The destination sheet opens on the Growing
+    /// concepts section so the thought can feed the seed it belongs to (or
+    /// name a new one). The old verb always started a NEW seedling named
+    /// after the capture, which is why seeds were unreachable by hand.
     func growSeedling(_ item: InboxItem) async {
+        showOverride(for: item, focus: .concepts)
+    }
+
+    /// The capture adds mass to a growing seedling. No atom, no canvas
+    /// object — the thought accrues with provenance and the seed ripens.
+    func growSeedling(_ item: InboxItem, seedling: Seedling) async {
+        guard processingItemIds.insert(item.uuid).inserted else { return }
+        defer { processingItemIds.remove(item.uuid) }
+
+        do {
+            let recommendation = InboxRecommendation(
+                kind: .feedSeedling,
+                confidence: 1.0,
+                suggestedAtomType: AtomType.connection.rawValue,
+                destinationPath: "Grows \u{201C}\(seedling.name)\u{201D}",
+                rationale: "Chosen by hand.",
+                atlasMove: InboxAtlasMove(seedlingUUID: seedling.uuid, seedlingName: seedling.name)
+            )
+            guard let fed = try await executor.executeFeedSeedling(item: item, recommendation: recommendation) else {
+                presentErrorToast("That concept is no longer growing — pick another one.")
+                return
+            }
+            showOverrideSheet = false
+            presentGrowToast(for: fed)
+            recordRoutingOutcome(for: item, chosenKind: InboxRouteKind.feedSeedling.rawValue, chosenLabel: fed.name)
+            refreshSeedlings()
+        } catch {
+            print("⚠️ [InboxVM] Grow seedling failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.growSeedling", detail: error.localizedDescription)
+            presentErrorToast("Couldn't grow the concept — the capture is still in your inbox.")
+        }
+    }
+
+    /// The capture names a NEW concept: a seedling is born with the thought
+    /// as its first seed (or feeds a live seedling that already carries the
+    /// same concept key — starting twice is an echo, not intent).
+    func startSeedling(_ item: InboxItem, named name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
         guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
@@ -840,22 +966,52 @@ final class InboxViewModel {
                 kind: .startSeedling,
                 confidence: 1.0,
                 suggestedAtomType: AtomType.connection.rawValue,
-                destinationPath: "Seedling",
-                rationale: "Manual grow.",
-                atlasMove: InboxAtlasMove(germinateTitle: item.title)
+                destinationPath: "New concept: \(trimmed)",
+                rationale: "Named by hand.",
+                atlasMove: InboxAtlasMove(germinateTitle: trimmed)
             )
             if let seedling = try await executor.executeStartSeedling(item: item, recommendation: recommendation) {
+                showOverrideSheet = false
                 presentGrowToast(for: seedling)
-                recordRoutingOutcome(
-                    for: item,
-                    chosenKind: InboxRouteKind.startSeedling.rawValue,
-                    chosenLabel: seedling.name
-                )
+                recordRoutingOutcome(for: item, chosenKind: InboxRouteKind.startSeedling.rawValue, chosenLabel: seedling.name)
+                refreshSeedlings()
             }
         } catch {
-            print("⚠️ [InboxVM] Grow failed: \(error)")
-            PersistenceHealth.note(.writeFailure, context: "InboxVM.growSeedling", detail: error.localizedDescription)
-            presentErrorToast("Couldn't grow the seedling — the capture is still in your inbox.")
+            print("⚠️ [InboxVM] Start seedling failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.startSeedling", detail: error.localizedDescription)
+            presentErrorToast("Couldn't start the concept — the capture is still in your inbox.")
+        }
+    }
+
+    // MARK: - Research sources (September 2026)
+
+    /// The capture is a SOURCE to read or study — a link, a video, scanned
+    /// pages. It becomes a Research source (the research lens, never the
+    /// Swipe File) and lands where the destination says: a Space's
+    /// materials, a Group, a Page's references, a Concept's References, or
+    /// the Library. The toast's Open lands on the source.
+    func fileAsResearch(_ item: InboxItem, destination: InboxFilingDestination) async {
+        guard processingItemIds.insert(item.uuid).inserted else { return }
+        defer { processingItemIds.remove(item.uuid) }
+
+        do {
+            let (_, receipt) = try await executor.executeResearch(item: item, destination: destination)
+            showOverrideSheet = false
+            presentFilingReceipt(receipt)
+            recordRoutingOutcome(
+                for: item,
+                chosenKind: InboxRouteKind.fileAsResearch.rawValue,
+                chosenLabel: destination.kind == .research ? "Library › Research" : "\(destination.path) › Research"
+            )
+            if let url = item.detectedSwipeURL {
+                // The correction is also the teaching — the domain prior
+                // learns that links like this are read, not copied.
+                SwipeLensRouter.recordDecision(lens: .research, url: url)
+            }
+        } catch {
+            print("⚠️ [InboxVM] File as research failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.fileAsResearch", detail: error.localizedDescription)
+            presentErrorToast(error.localizedDescription)
         }
     }
 

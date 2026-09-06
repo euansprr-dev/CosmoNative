@@ -139,6 +139,13 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
         return !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// True when the capture can become a Research SOURCE — something with
+    /// content to read or study later: a link, or captured pages/photos.
+    /// Plain prose is a thought, not a source; it grows, files, or asks.
+    var canBecomeResearch: Bool {
+        detectedSwipeURL != nil || !attachmentUUIDs.isEmpty
+    }
+
     /// What the Swipe verb WOULD make, so the button can name it. Mirrors
     /// `SwipeIntakeRouter.resolve` — the router is still the one that decides
     /// at execution time; this only predicts, for the label.

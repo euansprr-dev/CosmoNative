@@ -124,6 +124,8 @@ extension ContentPipelineService {
                 dict["status"] = dict["scheduledAt"] == nil ? "draft" : "scheduled"
             }
             dict.removeValue(forKey: "phaseBeforeSchedule")
+            // A deliberate stage move is activity: it returns a cleared piece to the board.
+            dict.removeValue(forKey: Self.boardClearedAtKey)
             var result = fresh
             result.metadata = String(decoding: try JSONSerialization.data(withJSONObject: dict), as: UTF8.self)
             result.updatedAt = ISO8601.string(from: Date())
@@ -158,6 +160,46 @@ extension ContentPipelineService {
         }
         await ChangeTracker.shared.trackUpdate(table: "atoms", entity: change.1, skipVersionIncrement: true)
         await notifyCalendar()
+        return change
+    }
+}
+
+extension ContentPipelineService {
+    /// The board's own memory: a shipped piece the user cleared from the
+    /// Published column. Board-only — the ledger, the calendar, ⌘K and the
+    /// client hub never read it. A stage move or a new publication drops it,
+    /// so activity always brings a piece back.
+    static let boardClearedAtKey = "boardClearedAt"
+
+    /// One key-merged write. Clearing stamps the moment; returning removes
+    /// the key. A write that changes nothing is a no-op (no version bump, no
+    /// sync push).
+    @discardableResult
+    static func setClearedFromBoard(contentUUID: String, cleared: Bool, at date: Date = Date()) async throws -> (before: Atom, after: Atom) {
+        let change = try await CosmoDatabase.shared.asyncWrite { db -> (Atom, Atom) in
+            guard let before = try Atom.filter(Column("uuid") == contentUUID)
+                .filter(Column("is_deleted") == false)
+                .filter(Column("type") == AtomType.content.rawValue).fetchOne(db),
+                  before.metadata == nil || before.metadataDict != nil else { throw ContentPipelineError.contentNotFound }
+            var dict = before.metadataDict ?? [:]
+            let prior = dict[boardClearedAtKey] as? String
+            if cleared {
+                dict[boardClearedAtKey] = prior ?? ISO8601.string(from: date)
+            } else {
+                dict.removeValue(forKey: boardClearedAtKey)
+            }
+            guard (dict[boardClearedAtKey] as? String) != prior else { return (before, before) }
+            var updated = before
+            updated.metadata = String(decoding: try JSONSerialization.data(withJSONObject: dict), as: UTF8.self)
+            updated.updatedAt = ISO8601.string(from: Date())
+            updated.localVersion += 1
+            try updated.update(db)
+            try db.execute(sql: "UPDATE atoms SET _local_pending = 1 WHERE uuid = ?", arguments: [contentUUID])
+            return (before, updated)
+        }
+        if change.0.localVersion != change.1.localVersion {
+            await ChangeTracker.shared.trackUpdate(table: "atoms", entity: change.1, skipVersionIncrement: true)
+        }
         return change
     }
 }

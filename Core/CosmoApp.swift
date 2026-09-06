@@ -831,7 +831,17 @@ struct CosmoCommands: Commands {
                 EditorCommandBus.shared.toggleFormatting(.italic)
             }
             .keyboardShortcut("i", modifiers: [.command])
-            
+
+            Button("Underline") {
+                EditorCommandBus.shared.toggleFormatting(.underline)
+            }
+            .keyboardShortcut("u", modifiers: [.command])
+
+            Button("Strikethrough") {
+                EditorCommandBus.shared.toggleFormatting(.strikethrough)
+            }
+            .keyboardShortcut("x", modifiers: [.command, .shift])
+
             Divider()
             
             Button("Heading 1") {

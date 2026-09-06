@@ -44,7 +44,9 @@ final class CaptureLanesViewModel {
     /// atoms the verbs create come out real.
     func inspectorItem(for capture: CapturedItem) -> InboxItem {
         let attachmentUUIDs = (attachmentsByItemId[capture.uuid] ?? []).map(\.uuid)
-        let payload: [String: Any] = ["attachmentUUIDs": attachmentUUIDs, "captureRecordKind": "lane"]
+        var payload: [String: Any] = ["attachmentUUIDs": attachmentUUIDs, "captureRecordKind": "lane"]
+        // The lane it rests in — "Move to lane" menus leave it out.
+        if let laneID = capture.captureDestinationId { payload["captureLaneId"] = laneID }
         let metadata = (try? JSONSerialization.data(withJSONObject: payload)).map { String(decoding: $0, as: UTF8.self) }
         return InboxItem(
             id: nil,
@@ -330,58 +332,34 @@ extension CaptureLanesViewModel: InboxInspectorHost {
         destinations.filter { $0.uuid != selectedDestinationId }
     }
 
-    /// Lane → lane: the ledger row's routing changes, nothing is created.
-    /// Undo puts it back in the lane it came from.
+    /// Lane → lane.
     func moveToLane(_ item: InboxItem, lane: CaptureDestination) async {
-        guard let capture = capture(matching: item) else { return }
-        do {
-            try await capturedRepo.updateRouting(
-                uuid: capture.uuid,
-                destinationId: lane.uuid,
-                parsedCommand: capture.parsedCommand,
-                parsedIntent: "lane_move",
-                confidence: capture.routingConfidence,
-                status: capture.status,
-                createdObjectIds: capture.createdObjectIds,
-                parentDeepDiveId: capture.parentDeepDiveId,
-                parentInquirySessionId: capture.parentInquirySessionId,
-                parentQuestionId: capture.parentQuestionId,
-                parentProjectId: capture.parentProjectId
-            )
-            await CaptureDestinationRepository.shared.markUsed(uuid: lane.uuid)
-            isInspectorOpen = false
-            focusedCaptureId = nil
-            NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
-            await refresh()
-            let original = capture
-            CosmoUndoManager.shared.register(
-                InlineUndoAction(actionDescription: "Move Capture to Lane") { [weak self] in
-                    try? await self?.setStatus(of: original, to: original.status, intent: original.parsedIntent)
-                    NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
-                } redo: { [weak self] in
-                    guard let self else { return }
-                    try? await self.capturedRepo.updateRouting(
-                        uuid: original.uuid,
-                        destinationId: lane.uuid,
-                        parsedCommand: original.parsedCommand,
-                        parsedIntent: "lane_move",
-                        confidence: original.routingConfidence,
-                        status: original.status,
-                        createdObjectIds: original.createdObjectIds,
-                        parentDeepDiveId: original.parentDeepDiveId,
-                        parentInquirySessionId: original.parentInquirySessionId,
-                        parentQuestionId: original.parentQuestionId,
-                        parentProjectId: original.parentProjectId
-                    )
-                    NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
-                }
-            )
-            triageModel?.presentLaneToast("Moved to \(lane.name)")
-        } catch {
-            print("CaptureLanesViewModel.moveToLane failed: \(error)")
-            PersistenceHealth.note(.writeFailure, context: "CaptureLanesVM.moveToLane", detail: "\(capture.uuid): \(error.localizedDescription)")
-            triageModel?.presentLaneToast("Couldn't move that capture.", isError: true)
-        }
+        // ONE implementation (the queue model's): it re-routes the ledger
+        // row, registers undo, and shows the toast — the lane page just
+        // refreshes so the row leaves this ledger.
+        await triageModel?.moveToLane(item, lane: lane)
+        isInspectorOpen = false
+        focusedCaptureId = nil
+        await refresh()
+    }
+
+    var seedlings: [Seedling] {
+        triageModel?.seedlings ?? []
+    }
+
+    func growSeedling(_ item: InboxItem, seedling: Seedling) async {
+        await triageModel?.growSeedling(item, seedling: seedling)
+        await refresh()
+    }
+
+    func startSeedling(_ item: InboxItem, named name: String) async {
+        await triageModel?.startSeedling(item, named: name)
+        await refresh()
+    }
+
+    func fileAsResearch(_ item: InboxItem, destination: InboxFilingDestination) async {
+        await triageModel?.fileAsResearch(item, destination: destination)
+        await refresh()
     }
 
     func fileAsIdea(_ item: InboxItem) async {
@@ -410,6 +388,10 @@ extension CaptureLanesViewModel: InboxInspectorHost {
 
     func showOverride(for item: InboxItem) {
         triageModel?.showOverride(for: item)
+    }
+
+    func showOverride(for item: InboxItem, focus: InboxOverrideFocus) {
+        triageModel?.showOverride(for: item, focus: focus)
     }
 }
 

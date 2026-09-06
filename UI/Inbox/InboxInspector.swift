@@ -30,6 +30,9 @@ struct InboxInspector: View {
     /// inquiry starts inside it.
     @State private var newSpacePrompt = false
     @State private var newSpaceName = ""
+    /// "New concept…" from the grow menu — names the seed first.
+    @State private var newConceptPrompt = false
+    @State private var newConceptName = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // MARK: - Inline edit
@@ -89,6 +92,17 @@ struct InboxInspector: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("A Space named for the topic, with this capture's inquiry started inside it.")
+        }
+        .alert("New concept", isPresented: $newConceptPrompt) {
+            TextField("Concept name", text: $newConceptName)
+            Button("Start concept") {
+                let name = newConceptName
+                Task { await viewModel.startSeedling(item, named: name) }
+            }
+            .disabled(newConceptName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("A seedling in the nursery with this thought as its first seed. No page until you develop it.")
         }
     }
 
@@ -259,8 +273,13 @@ struct InboxInspector: View {
             )
             SwipeLensPill(verdict: verdict) { chosen in
                 SwipeLensRouter.recordDecision(lens: chosen, url: url)
-                if chosen == .swipe {
+                switch chosen {
+                case .swipe:
                     Task { await viewModel.fileAsSwipe(item) }
+                case .research:
+                    // The flip files, both ways: research lands in the Library;
+                    // "Save as Research ›" below names a Space or Concept.
+                    Task { await viewModel.fileAsResearch(item, destination: .libraryResearch) }
                 }
             }
         }
@@ -420,9 +439,9 @@ struct InboxInspector: View {
                     } label: {
                         Label("Start inquiry in", systemImage: "text.magnifyingglass")
                     }
-                    if !viewModel.lanes.isEmpty {
+                    if viewModel.lanes.contains(where: { $0.uuid != item.restingLaneID }) {
                         Menu {
-                            ForEach(viewModel.lanes, id: \.uuid) { lane in
+                            ForEach(viewModel.lanes.filter { $0.uuid != item.restingLaneID }, id: \.uuid) { lane in
                                 Button(lane.name, systemImage: lane.icon) { Task { await viewModel.moveToLane(item, lane: lane) } }
                             }
                         } label: {
@@ -430,6 +449,26 @@ struct InboxInspector: View {
                         }
                     }
                     Button("Save Content idea…", systemImage: "lightbulb") { viewModel.showOverride(for: item) }
+                    if item.canBecomeResearch {
+                        // A source to READ lives with the research lens — a
+                        // Space's materials, a Concept's References, the
+                        // Library — never in the Swipe File.
+                        Menu {
+                            Button("Library", systemImage: "books.vertical") {
+                                Task { await viewModel.fileAsResearch(item, destination: .libraryResearch) }
+                            }
+                            if !viewModel.inquirySpaces.isEmpty { Divider() }
+                            ForEach(viewModel.inquirySpaces) { space in
+                                Button(space.name, systemImage: "square.grid.2x2") {
+                                    Task { await viewModel.fileAsResearch(item, destination: .init(kind: .space, uuid: space.id, spaceID: space.id, name: space.name, path: space.name)) }
+                                }
+                            }
+                            Divider()
+                            Button("Choose…", systemImage: "tray.and.arrow.down") { viewModel.showOverride(for: item, focus: .research) }
+                        } label: {
+                            Label("Save as Research in", systemImage: "books.vertical")
+                        }
+                    }
                     if item.canBecomeSwipe {
                         Button("Save in Swipe", systemImage: item.predictedSwipeKind.iconName) { Task { await viewModel.fileAsSwipe(item) } }
                     }
@@ -437,7 +476,22 @@ struct InboxInspector: View {
                         Button("Add to Swipe flow…", systemImage: SwipeKind.flow.iconName) { Task { await viewModel.addCaptureToFlow(item) } }
                     }
                     Divider()
-                    Button("Develop a Concept", systemImage: "leaf") { Task { await viewModel.growSeedling(item) } }
+                    // Thoughts feed the concept they belong to — the seeds are
+                    // listed, ripest first; a new one is a name away.
+                    Menu {
+                        ForEach(viewModel.seedlings, id: \.uuid) { seedling in
+                            Button("\(seedling.name) · \(seedling.massSummary)", systemImage: "leaf") {
+                                Task { await viewModel.growSeedling(item, seedling: seedling) }
+                            }
+                        }
+                        if !viewModel.seedlings.isEmpty { Divider() }
+                        Button("New concept…", systemImage: "plus") {
+                            newConceptName = item.title ?? String(item.rawText.prefix(48))
+                            newConceptPrompt = true
+                        }
+                    } label: {
+                        Label("Grow a concept", systemImage: "leaf")
+                    }
                     if !item.relatedAtomUUIDsValue.isEmpty {
                         Button("Save related Concept", systemImage: "point.3.connected.trianglepath.dotted") { Task { await viewModel.connectCapture(item) } }
                     }

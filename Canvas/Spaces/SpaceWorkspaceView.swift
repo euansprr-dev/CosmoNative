@@ -339,6 +339,11 @@ private struct SpaceWorkspaceImageViewer: View {
                 Button("Fit") { changeZoom(1) }.frame(minHeight: 44).help("Fit the image in the window")
                 Button { changeZoom(zoom * 1.4) } label: { Image(systemName: "plus.magnifyingglass").frame(width: 44, height: 44) }
                     .help("Zoom in").accessibilityLabel("Zoom in").disabled(image == nil || zoom >= 4)
+                Button { if let saveRequest { ImageSaveActions.perform(.downloads, request: saveRequest) } } label: {
+                    Image(systemName: "square.and.arrow.down").frame(width: 44, height: 44)
+                }
+                .help("Save to Downloads (⌘S)").accessibilityLabel("Save image")
+                .keyboardShortcut("s", modifiers: .command).disabled(saveRequest == nil)
                 Button("Done") { dismiss() }.frame(minHeight: 44).keyboardShortcut(.cancelAction)
             }.buttonStyle(.plain).foregroundStyle(DS.text).padding(.horizontal, DS.space20).padding(.vertical, DS.space8)
             Divider()
@@ -350,6 +355,8 @@ private struct SpaceWorkspaceImageViewer: View {
                                    height: max(1, geometry.size.height - 48) * min(4, max(1, zoom * pinch)))
                             .padding(DS.space24)
                             .accessibilityLabel(atom.title ?? "Image")
+                            .imageSaveAffordance(saveRequest, inset: DS.space24 + DS.space10)
+                            .imageSaveContextMenu(saveRequest)
                     }
                     .simultaneousGesture(MagnifyGesture().updating($pinch) { value, state, _ in state = value.magnification }
                         .onEnded { changeZoom(zoom * $0.magnification, animated: false) })
@@ -367,6 +374,11 @@ private struct SpaceWorkspaceImageViewer: View {
             }
         }.frame(minWidth: 600, idealWidth: 900, minHeight: 480, idealHeight: 700).background(DS.bg)
             .task(id: retry) { await load() }
+    }
+    private var saveRequest: ImageSaveRequest? {
+        guard let sourceURL else { return nil }
+        let title = atom.imageMetadata?.originalFilename.flatMap { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent } ?? atom.title
+        return ImageSaveRequest(sourceURL.isFileURL ? .file(sourceURL) : .remote(sourceURL), title: title)
     }
     private func changeZoom(_ next: CGFloat, animated: Bool = true) {
         withAnimation(animated && !reduceMotion ? ProMotionSprings.gentle : nil) { zoom = min(4, max(1, next)) }

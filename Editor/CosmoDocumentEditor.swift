@@ -154,6 +154,11 @@ enum EditorBoundaryCommand: Equatable {
     /// A block-manipulation key equivalent (⌘D, ⌥⌘↑/↓, ⌥⌘1–3, ⇧⌘L) landed in
     /// a block row — the host applies it structurally.
     case blockShortcut(BlockKeyboardShortcut, livePlainText: String)
+    /// Tab (deeper) / ⇧Tab (shallower) in a LIST row — nest the item one
+    /// level under the item above, or walk it back toward the margin. The
+    /// host moves the item and its subtree together. livePlainText is the
+    /// row's current truth so an in-flight keystroke survives the rebuild.
+    case indentListBlock(deeper: Bool, livePlainText: String)
     /// Table cell mode: the caret wants to leave the cell (Tab/⇧Tab, Return,
     /// arrows at the cell's text edges). livePlainText is the cell's current
     /// truth so the host commits it before moving focus.
@@ -178,6 +183,11 @@ enum BlockKeyboardShortcut: Equatable {
     case moveDown
     case heading(Int)
     case checklistToggle
+    /// ⌘] / ⌘[ — nest / un-nest a list item (Tab / ⇧Tab from the menu bar's
+    /// point of view). Block rows only; the continuous editor handles Tab
+    /// itself.
+    case indent
+    case outdent
     /// Table cell mode only — block rows ignore these.
     case tableAddRowBelow
     case tableMoveColumn(Int)
@@ -524,7 +534,11 @@ struct CosmoDocumentEditor: View {
                     singleLine: singleLine,
                     baseFontWeight: baseFontWeight,
                     titleMode: titleConfiguration != nil,
-                    numberedListSeed: numberedListSeed
+                    numberedListSeed: numberedListSeed,
+                    // Block rows inset THEMSELVES (the SwiftUI row pads by
+                    // level so the move can animate); the continuous editor
+                    // carries the inset in the storage.
+                    insetsListIndent: !splitsOnReturn
                 )
             )
         )

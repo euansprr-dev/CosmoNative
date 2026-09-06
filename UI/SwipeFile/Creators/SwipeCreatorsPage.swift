@@ -1,49 +1,74 @@
+// CosmoOS/UI/SwipeFile/Creators/SwipeCreatorsPage.swift
+// Explore ▸ Creators: every creator in the library in one directory — the
+// ones you pulled a catalog for on top, the ones that exist only through
+// saved posts beneath — with the creator page pushed in place. One model
+// (`CreatorDirectoryModel`) owns the truth; this page owns navigation.
+// Rebuilt from the ground up, September 2026.
+
 import SwiftUI
+import AppKit
 
-/// Creators: a card directory (not a settings list) with an in-page profile push.
 struct SwipeCreatorsPage: View {
-    @Bindable var model: SwipeDiscoverModel
+    @Bindable var model: CreatorDirectoryModel
+    @Bindable var discover: SwipeDiscoverModel
+    /// A creator another surface asked for (the Study chip, ⌘K).
+    @Binding var openRequest: String?
 
-    @State private var selectedCreatorID: String?
+    @State private var selectedID: String?
     @State private var contextPillVisible = false
     @State private var scrollPosition = ScrollPosition()
+    @State private var addText = ""
+    @State private var isAdding = false
     @FocusState private var searchFocused: Bool
+    @FocusState private var addFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             SwipePageBackground()
-            if let creator = selectedCreatorID.flatMap({ model.creator(id: $0) }) {
-                SwipeCreatorProfilePane(
-                    creator: creator,
-                    model: model,
-                    onBack: { withAnimation(ProMotionSprings.focusTransition) { selectedCreatorID = nil } }
-                )
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+            if let id = selectedID, let creator = model.summary(id: id) {
+                SwipeCreatorPage(creator: creator, model: model, discover: discover, onBack: back)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             } else {
-                directory
-                    .transition(.opacity)
+                directory.transition(.opacity)
             }
         }
         .coordinateSpace(name: "swipePage")
-        .task { await model.loadIfNeeded() }
-        .overlay(alignment: .bottom) {
-            SwipeSaveToast(message: $model.saveMessage)
-        }
+        .task { await model.start() }
+        .onChange(of: openRequest, initial: true) { _, id in consumeOpenRequest(id) }
+        .onChange(of: model.hasLoaded) { _, _ in consumeOpenRequest(openRequest) }
+        .overlay(alignment: .bottom) { SwipeSaveToast(message: $model.toast) }
+        .animation(reduceMotion ? nil : ProMotionSprings.focusTransition, value: selectedID)
+    }
+
+    private func back() {
+        selectedID = nil
+    }
+
+    private func consumeOpenRequest(_ id: String?) {
+        guard let id, model.summary(id: id) != nil else { return }
+        selectedID = id
+        openRequest = nil
     }
 
     // MARK: - Directory
 
     private var directory: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DS.space16) {
+            VStack(alignment: .leading, spacing: DS.space24) {
                 masthead
-                importNotices
-                if model.isLoading && model.creators.isEmpty {
-                    SwipeSkeletonGrid(targetColumnWidth: 248)
-                } else if model.filteredCreators.isEmpty {
+                controls
+                if let error = model.errorMessage {
+                    SwipeDiscoverNotice(text: error, isError: true)
+                }
+                if model.isLoading && model.summaries.isEmpty {
+                    SwipeSkeletonGrid(targetColumnWidth: 300)
+                } else if model.summaries.isEmpty {
                     emptyState
+                } else if model.filtered.isEmpty {
+                    SwipeLibraryErrorState(message: "No creators match — try fewer words.", onRetry: { model.searchText = "" })
                 } else {
-                    creatorGrid
+                    sections
                 }
             }
             .padding(.horizontal, 48)
@@ -53,21 +78,12 @@ struct SwipeCreatorsPage: View {
         }
         .scrollPosition($scrollPosition)
         .scrollEdgeEffectStyle(.soft, for: .all)
-        .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { _, new in
-            let shouldShow = new > 88
-            if shouldShow != contextPillVisible {
-                contextPillVisible = shouldShow
-            }
+        .onScrollGeometryChange(for: Bool.self, of: { $0.contentOffset.y > 88 }) { _, show in
+            if show != contextPillVisible { contextPillVisible = show }
         }
         .overlay(alignment: .top) {
-            SwipeContextPill(
-                title: "Creators",
-                detail: "\(model.filteredCreators.count) profiles",
-                visible: contextPillVisible
-            ) {
-                withAnimation(ProMotionSprings.gentle) {
-                    scrollPosition.scrollTo(edge: .top)
-                }
+            SwipeContextPill(title: "Creators", detail: "\(model.filtered.count) profiles", visible: contextPillVisible) {
+                withAnimation(ProMotionSprings.gentle) { scrollPosition.scrollTo(edge: .top) }
             }
             .padding(.top, DS.space12)
         }
@@ -77,126 +93,216 @@ struct SwipeCreatorsPage: View {
         HStack(alignment: .top, spacing: DS.space12) {
             SwipeMasthead(title: "Creators")
             Spacer(minLength: DS.space16)
-            HStack(spacing: 8) {
+            HStack(spacing: DS.space8) {
+                SwipeLibrarySearchField(text: $model.searchText, isFocused: $searchFocused, placeholder: "Find a creator")
                 sortMenu
-                SwipeLibrarySearchField(
-                    text: $model.creatorSearchText,
-                    isFocused: $searchFocused,
-                    placeholder: "Search or paste profile URL"
-                )
-                addButton
             }
+        }
+    }
+
+    /// Scope pills lead; the add field trails — "whose posts" then "add more".
+    private var controls: some View {
+        HStack(alignment: .center, spacing: DS.space12) {
+            HStack(spacing: DS.space6) {
+                ForEach(CreatorDirectoryScope.allCases) { scope in
+                    CreatorScopePill(title: scope.title, count: count(for: scope), isSelected: model.scope == scope) {
+                        withAnimation(ProMotionSprings.snappy) { model.scope = scope }
+                    }
+                }
+            }
+            Spacer(minLength: DS.space12)
+            addField
+        }
+    }
+
+    private func count(for scope: CreatorDirectoryScope) -> Int {
+        switch scope {
+        case .all: return model.summaries.count
+        case .catalogued: return model.summaries.count(where: \.hasCatalog)
+        case .fromSwipes: return model.summaries.count { !$0.hasCatalog }
         }
     }
 
     private var sortMenu: some View {
         Menu {
-            ForEach(SocialDiscoverySort.allCases, id: \.rawValue) { sort in
+            ForEach(CreatorDirectorySort.allCases) { sort in
                 Button {
-                    model.creatorSortMode = sort
+                    withAnimation(ProMotionSprings.snappy) { model.sort = sort }
                 } label: {
-                    if model.creatorSortMode == sort {
-                        Label(sort.displayName, systemImage: "checkmark")
-                    } else {
-                        Text(sort.displayName)
-                    }
+                    if model.sort == sort { Label(sort.label, systemImage: "checkmark") } else { Text(sort.label) }
                 }
             }
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.up.arrow.down")
-                    .font(DS.caption.weight(.semibold))
-                Text(model.creatorSortMode.displayName)
-                    .font(DS.subheadline.weight(.medium))
+            HStack(spacing: DS.space6) {
+                Image(systemName: "arrow.up.arrow.down").font(DS.caption.weight(.semibold))
+                Text(model.sort.label).font(DS.subheadline.weight(.medium))
             }
             .foregroundStyle(DS.textSecondary)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, DS.space12)
             .frame(height: 32)
             .background(Capsule().fill(DS.glassInputFill))
             .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 0.5))
             .contentShape(Capsule())
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .help("Sort creators")
-        .accessibilityLabel("Sort: \(model.creatorSortMode.displayName)")
+        .accessibilityLabel("Sort: \(model.sort.label)")
     }
 
-    private var addButton: some View {
-        Button {
-            model.addCreatorFromSearch()
-        } label: {
-            HStack(spacing: 6) {
-                if model.isAddingCreator {
-                    Image(systemName: "hourglass")
-                        .font(DS.caption.weight(.semibold))
-                } else {
-                    Image(systemName: "plus")
-                        .font(DS.caption.weight(.bold))
-                }
-                Text("Add creator")
-                    .font(DS.subheadline.weight(.semibold))
+    /// Paste a profile URL or a handle. The creator joins the directory at
+    /// once; when Apify is configured the page opens with a catalog pull
+    /// ready to confirm — the same ~150-post pull a manual add always did.
+    private var addField: some View {
+        HStack(spacing: DS.space6) {
+            Image(systemName: "person.badge.plus")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.textMuted)
+                .accessibilityHidden(true)
+            TextField("Add a creator — profile URL or @handle", text: $addText)
+                .textFieldStyle(.plain)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.text)
+                .focused($addFocused)
+                .onSubmit(addCreator)
+            Button(action: addCreator) {
+                Text(isAdding ? "Adding…" : "Add")
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.textOnAccent)
+                    .padding(.horizontal, DS.space10)
+                    .frame(height: 24)
+                    .background(DS.accent, in: .capsule)
             }
-            .foregroundStyle(DS.textOnAccent)
-            .padding(.horizontal, 13)
-            .frame(height: 32)
-            .background(DS.accent, in: Capsule())
-            .contentShape(Capsule())
+            .buttonStyle(.plain)
+            .disabled(isAdding || addText.trimmingCharacters(in: .whitespaces).isEmpty)
+            .keyboardShortcut(.return, modifiers: .command)
+            .help("Add this creator and pull their latest posts")
         }
-        .buttonStyle(.plain)
-        .disabled(model.isAddingCreator)
-        .help("Add the pasted URL or platform:handle to the discovery graph")
-        .accessibilityLabel("Add creator")
+        .padding(.leading, DS.space12)
+        .padding(.trailing, DS.space4)
+        .frame(width: 360, height: 32)
+        .dsGlassInput(isFocused: addFocused, cornerRadius: 16)
+        .accessibilityLabel("Add a creator")
+    }
+
+    private func addCreator() {
+        let input = addText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty, !isAdding else { return }
+        isAdding = true
+        Task { @MainActor in
+            defer { isAdding = false }
+            guard let created = await model.addCreator(input: input) else { return }
+            addText = ""
+            selectedID = created.id
+            if model.apifyConfigured, !created.hasCatalog {
+                await model.preparePull(for: created.id)
+            }
+        }
     }
 
     @ViewBuilder
-    private var importNotices: some View {
-        if let message = model.creatorImportMessage {
-            SwipeDiscoverNotice(text: message)
+    private var sections: some View {
+        if model.scope == .all {
+            if !model.catalogued.isEmpty {
+                section(title: "Pulled catalogs", detail: "\(model.catalogued.count)", creators: model.catalogued)
+            }
+            if !model.fromSwipes.isEmpty {
+                section(title: "From your swipes", detail: "\(model.fromSwipes.count)", creators: model.fromSwipes)
+            }
+        } else {
+            grid(model.filtered)
         }
-        if let error = model.creatorImportError {
-            SwipeDiscoverNotice(text: error, isError: true)
+    }
+
+    private func section(title: String, detail: String, creators: [CreatorProfileSummary]) -> some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            CosmoShelfHeader(title: title, detail: detail)
+            grid(creators)
+        }
+    }
+
+    private func grid(_ creators: [CreatorProfileSummary]) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300, maximum: 440), spacing: 16)], spacing: 16) {
+            ForEach(creators) { creator in
+                CreatorDirectoryCard(
+                    creator: creator,
+                    onOpen: { selectedID = creator.id },
+                    onPull: {
+                        selectedID = creator.id
+                        Task { await model.preparePull(for: creator.id) }
+                    },
+                    onDelete: { Task { await model.delete(creator.id) } }
+                )
+            }
         }
     }
 
     private var emptyState: some View {
-        SwipeLibraryErrorState(
-            message: model.creatorSearchText.isEmpty
-                ? "Paste a profile URL above — like youtube:aliabdaal — to start the discovery graph."
-                : "No creators match. Press Add creator to import this profile.",
-            onRetry: { Task { await model.reload() } }
-        )
-    }
-
-    private var creatorGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 16)], spacing: 16) {
-            ForEach(model.filteredCreators) { creator in
-                SwipeCreatorCard(creator: creator) {
-                    withAnimation(ProMotionSprings.focusTransition) { selectedCreatorID = creator.id }
-                }
-            }
+        VStack(alignment: .leading, spacing: DS.space12) {
+            Image(systemName: "person.2").font(DS.pageTitle).foregroundStyle(DS.textMuted)
+            Text("Your creators gather here").font(DS.title2).foregroundStyle(DS.text)
+            Text("Save a post and its creator appears with every post you keep from them. Paste a profile URL above to pull a creator's catalog and find their outliers.")
+                .font(DS.body).foregroundStyle(DS.textSecondary).frame(maxWidth: 520, alignment: .leading)
         }
+        .padding(.vertical, DS.space32)
     }
 }
 
-// MARK: - Creator card
+// MARK: - Scope pill
 
-private struct SwipeCreatorCard: View {
-    let creator: SwipeCreatorRecord
+private struct CreatorScopePill: View {
+    let title: String
+    let count: Int
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DS.space6) {
+                Text(title).font(DS.subheadline.weight(.medium))
+                Text("\(count)")
+                    .font(DS.caption2.weight(.medium).monospacedDigit())
+                    .foregroundStyle(isSelected ? DS.accent : DS.textMuted)
+                    .contentTransition(.numericText())
+            }
+            .foregroundStyle(isSelected || hovered ? DS.text : DS.textSecondary)
+            .padding(.horizontal, DS.space12)
+            .frame(height: 30)
+            .background(Capsule().fill(isSelected ? DS.accentSoft : (hovered ? DS.glassInputFill : Color.clear)))
+            .overlay(Capsule().strokeBorder(isSelected ? DS.accent.opacity(0.42) : DS.glassBorder, lineWidth: isSelected ? 1 : 0.5))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .animation(ProMotionSprings.hover, value: hovered)
+        .help(title)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+// MARK: - Card
+
+/// A creator as an object: avatar, name, the platform's real mark, a strip of
+/// their strongest saved posts, and one honest meta line.
+private struct CreatorDirectoryCard: View {
+    let creator: CreatorProfileSummary
     let onOpen: () -> Void
+    let onPull: () -> Void
+    let onDelete: () -> Void
 
     @State private var isHovered = false
 
     var body: some View {
-        // A real Button (was a bare onTapGesture): pressed feedback, a
-        // keyboard path, and honest button semantics.
         Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DS.space12) {
                 identityRow
-                outlierStrip
+                strip
                 Text(meta)
                     .font(DS.caption.monospacedDigit())
                     .foregroundStyle(DS.textMuted)
+                    .lineLimit(1)
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -207,109 +313,75 @@ private struct SwipeCreatorCard: View {
         .scaleEffect(isHovered ? 1.01 : 1)
         .animation(ProMotionSprings.hover, value: isHovered)
         .onHover { isHovered = $0 }
-        .help("Open \(creator.name)'s profile")
+        .contextMenu {
+            Button("Open", systemImage: "arrow.up.right.square", action: onOpen)
+            Button("Pull latest posts…", systemImage: "arrow.down.circle", action: onPull)
+            if let url = creator.profileURL {
+                Button("Open profile in browser", systemImage: "safari") { NSWorkspace.shared.open(url) }
+            }
+            Divider()
+            Button("Remove creator", systemImage: "trash", role: .destructive, action: onDelete)
+        }
+        .help("Open \(creator.name)")
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(creator.name), \(creator.handle)")
+        .accessibilityLabel("\(creator.name), \(creator.handle), \(creator.savedCount) saved")
         .accessibilityAddTraits(.isButton)
     }
 
     private var identityRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DS.space10) {
             SwipeCreatorAvatar(url: creator.avatarURL, name: creator.name, size: 48)
             VStack(alignment: .leading, spacing: 2) {
-                Text(creator.name)
-                    .font(DS.headline)
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-                Text(handleLine)
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
-                    .lineLimit(1)
+                Text(creator.name).font(DS.headline).foregroundStyle(DS.text).lineLimit(1)
+                Text(handleLine).font(DS.caption).foregroundStyle(DS.textMuted).lineLimit(1)
             }
             Spacer(minLength: 0)
-            // A drawn brand mark — camera.fill standing in for Instagram is
-            // the generic-glyph tell.
-            PlatformBrandMark(platform: creator.platform.displayName, size: 13)
+            if let platform = creator.platform {
+                PlatformBrandMark(platform: platform.rawValue, size: 13)
+            }
         }
     }
 
     private var handleLine: String {
         var parts = [creator.handle]
-        if let followers = creator.followerCount {
-            parts.append("\(SwipeFormatting.count(followers)) followers")
-        }
+        if let followers = creator.followerCount, followers > 0 { parts.append("\(SwipeFormatting.count(followers)) followers") }
         return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
-    private var outlierStrip: some View {
-        if creator.topPosts.isEmpty {
+    private var strip: some View {
+        if creator.thumbnailURLs.isEmpty {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(DS.glassSectionFill)
                 .frame(height: 56)
                 .overlay {
-                    Text("No posts imported yet")
-                        .font(DS.caption)
-                        .foregroundStyle(DS.textMuted)
+                    Text(creator.hasCatalog ? "Catalog pulled — nothing saved yet" : "No posts saved yet")
+                        .font(DS.caption).foregroundStyle(DS.textMuted)
                 }
         } else {
             HStack(spacing: 6) {
-                ForEach(creator.topPosts.prefix(3), id: \.id) { post in
-                    SwipeCreatorTopThumb(post: post)
+                ForEach(Array(creator.thumbnailURLs.prefix(3).enumerated()), id: \.offset) { _, url in
+                    CachedAsyncImage(url: url, stableKey: "creator-strip-\(url.absoluteString)") { phase in
+                        switch phase {
+                        case .success(let image): image.resizable().scaledToFill()
+                        case .empty, .failure: Rectangle().fill(DS.glassSectionFill)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .accessibilityHidden(true)
                 }
             }
         }
     }
 
     private var meta: String {
-        var parts = ["\(creator.postCount) posts"]
-        if let top = creator.topOutlierMultiplier, top >= 2 {
-            parts.append("top \(Int(top.rounded()))×")
-        }
-        if creator.totalViews > 0 {
-            parts.append("\(SwipeFormatting.count(creator.totalViews)) views")
-        }
+        var parts = ["\(creator.savedCount) saved"]
+        if let score = creator.averageHookScore { parts.append(String(format: "%.1f hook", score)) }
+        if creator.hasCatalog { parts.append("catalog \(creator.catalogCount)") }
+        if let latest = creator.latestSavedAt { parts.append(latest.cosmoCompactAge) }
         return parts.joined(separator: " · ")
-    }
-}
-
-private struct SwipeCreatorTopThumb: View {
-    let post: SocialPostSnapshot
-
-    private var thumbnailURL: URL? {
-        post.media.first(where: { $0.kind == .thumbnail || $0.kind == .image })?.url
-    }
-
-    var body: some View {
-        CachedAsyncImage(
-            url: thumbnailURL,
-            stableKey: post.providerPostID.isEmpty ? nil : "\(post.platform.rawValue)-\(post.providerPostID)"
-        ) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFill()
-            case .empty, .failure:
-                Rectangle().fill(DS.glassSectionFill)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 56)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(alignment: .topLeading) {
-            // The badge rides media only — floating a "3×" over an empty
-            // placeholder tile read as broken chrome.
-            if thumbnailURL != nil,
-               let multiplier = post.derived.outlierMultiplier, multiplier >= 2 {
-                Text("\(Int(multiplier.rounded()))×")
-                    .font(DS.caption2.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 5)
-                    .frame(height: 14)
-                    .background(.black.opacity(0.55), in: Capsule())
-                    .padding(4)
-            }
-        }
-        .accessibilityHidden(true)
     }
 }
 
@@ -322,8 +394,7 @@ struct SwipeCreatorAvatar: View {
 
     var body: some View {
         // Key on the URL string itself — Swift's hashValue is seeded per
-        // launch, so the old key missed the cache on every run and avatars
-        // re-downloaded (or fell back to initials) each session.
+        // launch, so a hash key missed the cache on every run.
         CachedAsyncImage(url: url, stableKey: url.map { "avatar-\($0.absoluteString)" }) { phase in
             switch phase {
             case .success(let image):
@@ -340,105 +411,7 @@ struct SwipeCreatorAvatar: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+        .overlay(Circle().strokeBorder(DS.glassBorder, lineWidth: 0.5))
         .accessibilityHidden(true)
-    }
-}
-
-// MARK: - Profile
-
-struct SwipeCreatorProfilePane: View {
-    let creator: SwipeCreatorRecord
-    @Bindable var model: SwipeDiscoverModel
-    let onBack: () -> Void
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DS.space16) {
-                backButton
-                profileMasthead
-                SwipeDiscoverPostGrid(posts: sortedPosts, model: model)
-            }
-            .padding(.horizontal, 48)
-            .padding(.top, 28)
-            .padding(.bottom, 72)
-            .swipeContentMeasure()
-        }
-        .scrollEdgeEffectStyle(.soft, for: .all)
-        .onExitCommand(perform: onBack)
-    }
-
-    private var sortedPosts: [SocialPostSnapshot] {
-        model.posts(for: creator).sorted { ($0.derived.outlierMultiplier ?? 0) > ($1.derived.outlierMultiplier ?? 0) }
-    }
-
-    private var backButton: some View {
-        Button(action: onBack) {
-            HStack(spacing: 5) {
-                Image(systemName: "chevron.left")
-                    .font(DS.caption.weight(.semibold))
-                Text("Creators")
-                    .font(DS.subheadline.weight(.medium))
-            }
-            .foregroundStyle(DS.textSecondary)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut("[", modifiers: .command)
-        .help("Back to creators (Esc)")
-    }
-
-    private var profileMasthead: some View {
-        HStack(alignment: .center, spacing: DS.space16) {
-            SwipeCreatorAvatar(url: creator.avatarURL, name: creator.name, size: 72)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(creator.name)
-                    .font(DS.pageTitle)
-                    .foregroundStyle(DS.text)
-                Text(metaLine)
-                    .font(DS.subheadline)
-                    .foregroundStyle(DS.textMuted)
-                if let bio = creator.bio, !bio.isEmpty {
-                    Text(bio)
-                        .font(DS.subheadline)
-                        .foregroundStyle(DS.textSecondary)
-                        .lineLimit(2)
-                        .frame(maxWidth: 560, alignment: .leading)
-                }
-            }
-            Spacer(minLength: DS.space16)
-            stats
-        }
-    }
-
-    private var metaLine: String {
-        var parts = [creator.handle]
-        if let followers = creator.followerCount {
-            parts.append("\(SwipeFormatting.count(followers)) followers")
-        }
-        parts.append(creator.platform.displayName)
-        return parts.joined(separator: " · ")
-    }
-
-    private var stats: some View {
-        HStack(spacing: DS.space20) {
-            stat(value: "\(creator.postCount)", label: "posts")
-            stat(value: SwipeFormatting.count(creator.totalViews), label: "views")
-            if let top = creator.topOutlierMultiplier {
-                stat(value: "\(Int(top.rounded()))×", label: "top outlier")
-            }
-        }
-    }
-
-    private func stat(value: String, label: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value)
-                .font(DS.title2.monospacedDigit())
-                .foregroundStyle(DS.text)
-            Text(label)
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .textCase(.uppercase)
-                .tracking(0.5)
-        }
     }
 }

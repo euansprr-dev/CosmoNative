@@ -63,7 +63,8 @@ final class SwipeDiscoverModel {
     }
 
     func posts(for creator: SwipeCreatorRecord) -> [SocialPostSnapshot] {
-        posts.filter { $0.author.platformID == creator.id || "@\($0.author.handle)" == creator.handle }
+        let key = CreatorIdentity.key(creator.handle)
+        return posts.filter { $0.author.platformID == creator.id || (key != nil && CreatorIdentity.key($0.author.handle) == key) }
     }
 
     func loadIfNeeded() async {
@@ -459,9 +460,19 @@ final class SwipeDiscoverModel {
             postShortcode: post.providerPostID
         )
         analysis.hookText = hook
+        // The post belongs to its creator from the first write — the same
+        // creator the classifier and the importer resolve to.
+        let creator = try? await CreatorDirectory.shared.resolve(
+            handle: post.author.handle, name: post.author.displayName, platform: post.platform
+        )
+        if let creator {
+            analysis.creatorUUID = creator.uuid
+            atom = atom.addingLink(.swipeToCreator(creator.uuid))
+        }
         atom = atom.withSwipeAnalysis(analysis)
 
         let saved = try await AtomRepository.shared.create(atom)
+        if let creator { await CreatorDirectory.shared.link(swipeUUID: saved.uuid, to: creator.uuid) }
 
         if needsBackgroundProcessing {
             SwipeProcessingService.shared.processSwipeInBackground(uuid: saved.uuid)

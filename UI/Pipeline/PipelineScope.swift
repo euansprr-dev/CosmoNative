@@ -111,6 +111,48 @@ struct PipelineFilters: Equatable, Sendable {
     }
 }
 
+// MARK: - Published window
+
+/// How far back the Published column looks. A lens over the board only —
+/// the ledger, the calendar, the client hub and search always hold every
+/// publish, whatever the window.
+enum PipelinePublishedWindow: String, CaseIterable, Identifiable, Sendable {
+    case week, month, quarter, allTime
+
+    var id: String { rawValue }
+
+    /// Days back from today; nil = no cut.
+    var days: Int? {
+        switch self {
+        case .week: return 7
+        case .month: return 30
+        case .quarter: return 90
+        case .allTime: return nil
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .week: return "Last 7 days"
+        case .month: return "Last 30 days"
+        case .quarter: return "Last 90 days"
+        case .allTime: return "All time"
+        }
+    }
+
+    /// The header chip's word.
+    var chip: String {
+        switch self {
+        case .week: return "7d"
+        case .month: return "30d"
+        case .quarter: return "90d"
+        case .allTime: return "All"
+        }
+    }
+
+    static let standard = PipelinePublishedWindow.month
+}
+
 // MARK: - Drop payload
 
 /// What a drag onto a board column or calendar day carries.

@@ -3,6 +3,7 @@
 // December 2025 - Thinkspace-as-Atom architecture
 
 import SwiftUI
+import AppKit
 import Combine
 import GRDB
 
@@ -888,30 +889,71 @@ class ThinkspaceManager {
         }
     }
 
-    /// Delete a Thinkspace (soft delete)
-    func delete(_ thinkspace: Thinkspace) async {
-        do {
-            try await repository.delete(uuid: thinkspace.id)
-            try? await InquiryRepository.shared.handleThinkspaceDeleted(thinkspace.id)
-            await loadThinkspaces()
+    /// Both Space menus use the same native confirmation sheet.
+    func confirmDelete(_ thinkspace: Thinkspace) async {
+        let alert = NSAlert()
+        alert.messageText = "Delete “\(thinkspace.name)”?"
+        alert.informativeText = "Keep the contents in your library, or delete them everywhere, including from other spaces. Child spaces are kept unless you delete the contents."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Keep Contents")
+        alert.addButton(withTitle: "Delete Contents").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+        let response: NSApplication.ModalResponse
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            response = await alert.beginSheetModal(for: window)
+        } else {
+            response = alert.runModal()
+        }
+        switch response {
+        case .alertFirstButtonReturn: await delete(thinkspace, contents: .keep)
+        case .alertSecondButtonReturn: await delete(thinkspace, contents: .delete)
+        default: break
+        }
+    }
 
-            // Switch to default if deleted current
-            if currentThinkspace?.id == thinkspace.id {
+    /// Programmatic deletion preserves originals unless explicitly requested.
+    func delete(_ thinkspace: Thinkspace, contents: SpaceDeletionService.Contents = .keep) async {
+        do {
+            let change = try await CosmoDatabase.shared.asyncWrite { db in
+                try SpaceDeletionService.delete(thinkspace.id, contents: contents, db: db)
+            }
+            await SpaceDeletionService.publish(change)
+            await loadThinkspaces()
+            if let current = currentThinkspace, change.deletedUUIDs.contains(current.id) {
                 switchToDefault()
             }
-
-            // ⌘Z brings the thinkspace back. (Deleting the CURRENT space
-            // switches away, and the switch clears undo history — so this
-            // effectively covers sidebar deletes of non-active spaces.)
             CosmoUndoManager.shared.register(InlineUndoAction(
-                actionDescription: "Delete Thinkspace",
-                undo: { [weak self] in await self?.restoreThinkspace(thinkspace.id) },
-                redo: { [weak self] in await self?.softDelete(thinkspace.id) }
+                actionDescription: "Delete Space",
+                undo: { [weak self] in await self?.applySpaceDeletion(change, undo: true) },
+                redo: { [weak self] in await self?.applySpaceDeletion(change, undo: false) }
             ))
-
-            print("🗑️ Deleted Thinkspace: \(thinkspace.name)")
         } catch {
-            print("❌ Failed to delete Thinkspace: \(error)")
+            showSpaceDeletionError(error)
+        }
+    }
+
+    private func applySpaceDeletion(_ change: SpaceDeletionService.Change, undo: Bool) async {
+        do {
+            try await CosmoDatabase.shared.asyncWrite { db in
+                try SpaceDeletionService.apply(change, undo: undo, db: db)
+            }
+            await SpaceDeletionService.publish(change, undo: undo)
+            await loadThinkspaces()
+            if !undo, let current = currentThinkspace, change.deletedUUIDs.contains(current.id) { switchToDefault() }
+        } catch {
+            showSpaceDeletionError(error)
+        }
+    }
+
+    private func showSpaceDeletionError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn’t update the space"
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: "OK")
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
         }
     }
 

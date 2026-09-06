@@ -27,6 +27,20 @@ final class PipelinePageModel {
     var collapsedColumns: Set<PipelineBoardSnapshot.Column> = PipelinePageModel.storedCollapsedColumns() {
         didSet { Self.storeCollapsedColumns(collapsedColumns) }
     }
+    /// How far back the Published column looks, persisted. A lens: nothing
+    /// outside it is lost — the foot row counts what the window hides.
+    var publishedWindow: PipelinePublishedWindow = PipelinePageModel.storedPublishedWindow() {
+        didSet {
+            guard publishedWindow != oldValue else { return }
+            Self.storePublishedWindow(publishedWindow)
+            Task { await rebuildSnapshot() }
+        }
+    }
+    /// Show pieces cleared from the board (dimmed) so they can be returned.
+    /// Transient by design — a forgotten toggle would rebuild the wall.
+    var showsClearedPublished = false {
+        didSet { if showsClearedPublished != oldValue { Task { await rebuildSnapshot() } } }
+    }
 
     private(set) var content: [PipelineContentItem] = []
     private(set) var archived: [PipelineContentItem] = []
@@ -202,12 +216,16 @@ final class PipelinePageModel {
         let contentDays = sessionDaysByContent
         let perf = perfByContent
         let filters = self.filters
+        let windowDays = publishedWindow.days
+        let showsCleared = showsClearedPublished
         let built = await Task.detached(priority: .userInitiated) {
             let snapshot = PipelineBoardSnapshot.build(
                 content: content,
                 sessionDaysByContent: contentDays,
                 perf: perf,
-                filters: filters
+                filters: filters,
+                shippedWindowDays: windowDays,
+                showsCleared: showsCleared
             )
             return (snapshot, Self.listRows(content: content, archived: archived, filters: filters))
         }.value
@@ -218,9 +236,19 @@ final class PipelinePageModel {
         }
     }
 
+    /// Only tasks that can book a session for content: a task's content
+    /// link lives in its metadata, so rows whose metadata never mentions
+    /// "content" are skipped in SQL (a superset of the real predicate — the
+    /// Swift filter below stays the truth). Cuts the per-reload decode from
+    /// every task in the library to the handful that are linked.
     private static func loadOpenTasks() async -> [Atom] {
-        ((try? await AtomRepository.shared.fetchAll(type: .task)) ?? [])
-            .filter { IdeaTaskLinkService.isOpenSession($0) }
+        let linked = (try? await CosmoDatabase.shared.asyncRead { db in
+            try Atom.filter(Column("type") == AtomType.task.rawValue)
+                .filter(Column("is_deleted") == false)
+                .filter(sql: "metadata LIKE ?", arguments: ["%content%"])
+                .fetchAll(db)
+        }) ?? []
+        return linked.filter { IdeaTaskLinkService.isOpenSession($0) }
     }
 
     nonisolated private static func listRows(
@@ -303,6 +331,17 @@ final class PipelinePageModel {
 
     private static func storeCollapsedColumns(_ columns: Set<PipelineBoardSnapshot.Column>) {
         UserDefaults.standard.set(columns.map(\.rawValue).sorted(), forKey: collapsedColumnsKey)
+    }
+
+    private static let publishedWindowKey = "pipeline.publishedWindow"
+
+    static func storedPublishedWindow() -> PipelinePublishedWindow {
+        UserDefaults.standard.string(forKey: publishedWindowKey)
+            .flatMap(PipelinePublishedWindow.init(rawValue:)) ?? .standard
+    }
+
+    private static func storePublishedWindow(_ window: PipelinePublishedWindow) {
+        UserDefaults.standard.set(window.rawValue, forKey: publishedWindowKey)
     }
 
     func move(_ uuid: String, to stage: ContentProductionStage) {
@@ -407,6 +446,69 @@ final class PipelinePageModel {
             toast(failures > 0 ? "Archived \(restore.count) · \(failures) couldn't be saved. Try again."
                   : (restore.count == 1 ? "Archived" : "Archived \(restore.count) pieces"))
             NotificationCenter.default.post(name: .contentCalendarNeedsReload, object: nil)
+            await load()
+        }
+    }
+
+    // MARK: Clearing the board (Published)
+
+    /// Take shipped pieces off the board. Board-only: the ledger, the
+    /// calendar, ⌘K and the client hub keep every one of them; the Published
+    /// foot row counts them and can show them again. One ⌘Z for the batch.
+    func clearFromBoard(_ uuids: [String]) {
+        let targets = uuids.compactMap { item($0) }.filter { $0.isShipped && !$0.isClearedFromBoard }.map(\.id)
+        guard !targets.isEmpty else { return }
+        setCleared(targets, cleared: true)
+    }
+
+    /// Everything the Published column is showing right now.
+    func clearPublishedColumn() {
+        clearFromBoard(snapshot.cards(in: .shipped).map(\.item.id))
+    }
+
+    func returnToBoard(_ uuids: [String]) {
+        let targets = uuids.compactMap { item($0) }.filter(\.isClearedFromBoard).map(\.id)
+        guard !targets.isEmpty else { return }
+        setCleared(targets, cleared: false)
+    }
+
+    func returnAllToBoard() {
+        returnToBoard(content.filter(\.isClearedFromBoard).map(\.id))
+    }
+
+    private func setCleared(_ uuids: [String], cleared: Bool) {
+        Task {
+            var done: [String] = []
+            var failures = 0
+            for uuid in uuids {
+                do {
+                    _ = try await ContentPipelineService.setClearedFromBoard(contentUUID: uuid, cleared: cleared)
+                    done.append(uuid)
+                } catch { failures += 1 }
+            }
+            let committed = done
+            if !committed.isEmpty {
+                let noun = committed.count == 1 ? "" : " \(committed.count) Pieces"
+                CosmoUndoManager.shared.register(InlineUndoAction(
+                    actionDescription: cleared ? "Clear\(noun) from Board" : "Return\(noun) to Board",
+                    undo: { [weak self] in
+                        for uuid in committed { _ = try? await ContentPipelineService.setClearedFromBoard(contentUUID: uuid, cleared: !cleared) }
+                        await self?.load()
+                    },
+                    redo: { [weak self] in
+                        for uuid in committed { _ = try? await ContentPipelineService.setClearedFromBoard(contentUUID: uuid, cleared: cleared) }
+                        await self?.load()
+                    }
+                ))
+            }
+            let count = committed.count
+            if failures > 0 {
+                toast("\(cleared ? "Cleared" : "Returned") \(count) · \(failures) couldn't be saved. Try again.")
+            } else if cleared {
+                toast(count == 1 ? "Cleared from the board · still in List and Calendar" : "Cleared \(count) from the board · still in List and Calendar")
+            } else {
+                toast(count == 1 ? "Back on the board" : "\(count) back on the board")
+            }
             await load()
         }
     }

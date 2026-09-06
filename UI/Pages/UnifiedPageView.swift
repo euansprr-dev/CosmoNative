@@ -8,6 +8,9 @@ struct UnifiedPageView: View {
     let atom: Atom
     var spaceID: String?
     var onClose: (() -> Void)?
+    /// Where the breadcrumb's Back leads when it is not simply closing —
+    /// the Atom window routes it to its switcher while Esc keeps closing.
+    var onBack: (() -> Void)?
     var initialBlockID: UUID?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -46,10 +49,11 @@ struct UnifiedPageView: View {
     @AppStorage("page.outlinePanel") private var outlineVisible = false
     @AppStorage("page.contextPanel") private var contextVisible = false
 
-    init(atom: Atom, spaceID: String? = nil, onClose: (() -> Void)? = nil, initialBlockID: UUID? = nil) {
+    init(atom: Atom, spaceID: String? = nil, onClose: (() -> Void)? = nil, onBack: (() -> Void)? = nil, initialBlockID: UUID? = nil) {
         self.atom = atom
         self.spaceID = spaceID
         self.onClose = onClose
+        self.onBack = onBack
         self.initialBlockID = initialBlockID
         let editingSession = SpacePageEditorStore.shared.session(for: atom)
         _session = State(initialValue: editingSession)
@@ -196,8 +200,8 @@ struct UnifiedPageView: View {
                     Image(systemName: "chevron.right").font(DS.caption2).accessibilityHidden(true)
                     Button(ancestor.title ?? "Untitled") { store.open(ancestor, in: spaceID) }.lineLimit(1)
                 }
-            } else if let onClose {
-                Button(action: onClose) { Label("Back", systemImage: "chevron.left") }.help("Return to where you opened this Page")
+            } else if let back = onBack ?? onClose {
+                Button(action: back) { Label("Back", systemImage: "chevron.left") }.help("Return to where you opened this Page")
             } else {
                 Label("Page", systemImage: "doc.text")
             }

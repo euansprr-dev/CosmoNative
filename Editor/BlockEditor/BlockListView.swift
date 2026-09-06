@@ -363,19 +363,9 @@ struct BlockListView: View {
     /// because it can only see its own single-block document. O(n) once per
     /// body evaluation, same order as the ForEach itself.
     static func numberedListOrdinals(for blocks: [RichBlock]) -> [Int] {
-        var ordinals: [Int] = []
-        ordinals.reserveCapacity(blocks.count)
-        var run = 0
-        for block in blocks {
-            if block.kind == .numberedList {
-                ordinals.append(run)
-                run += 1
-            } else {
-                ordinals.append(0)
-                run = 0
-            }
-        }
-        return ordinals
+        // Level-aware: a nested item never breaks the run above it, so
+        // "1., a., b., 2." numbers the way the eye expects.
+        RichListIndent.numberedOrdinals(for: blocks)
     }
 
     private func syncNavigationOrderIfNeeded() {
@@ -1151,8 +1141,17 @@ struct BlockListView: View {
             onCut: {
                 if copyBlocksToPasteboard(targets) { deleteSelectedBlocks(targets) }
             },
-            onUngroup: kind == .section ? { ungroupSections(targets) } : nil
+            onUngroup: kind == .section ? { ungroupSections(targets) } : nil,
+            onIndent: kind?.supportsListIndent == true ? { indentBlocks(targets, deeper: true) } : nil,
+            onOutdent: kind?.supportsListIndent == true ? { indentBlocks(targets, deeper: false) } : nil
         )
+    }
+
+    /// Handle-menu Indent / Outdent — every targeted list item moves one
+    /// level; the caret and selection stay where they are.
+    private func indentBlocks(_ ids: Set<UUID>, deeper: Bool) {
+        guard let result = BlockOperations.indentBlocks(withIDs: ids, in: document, deeper: deeper) else { return }
+        commit(result, undoActionName: deeper ? "Indent" : "Outdent", focusAfterCommit: false)
     }
 
     /// Hoist the children, drop the box — the selection's sections in place.
@@ -1534,7 +1533,7 @@ struct BlockStaticRowPlaceholder: View {
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
-        .padding(.leading, BlockInteractionPolicy.gutterWidth)
+        .padding(.leading, BlockInteractionPolicy.gutterWidth + CGFloat(block.listIndentLevel) * RichListIndent.insetPerLevel)
         .padding(.top, topSpacing)
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
@@ -1568,8 +1567,8 @@ struct BlockStaticRowPlaceholder: View {
     private var displayText: String {
         let text = block.plainInlineText
         switch block.kind {
-        case .bulletList: return "• " + text
-        case .numberedList: return "\(listOrdinal + 1). " + text
+        case .bulletList: return RichListIndent.bulletPrefix(level: block.listIndentLevel) + text
+        case .numberedList: return RichListIndent.numberedPrefix(position: listOrdinal + 1, level: block.listIndentLevel) + text
         // .quote and .checklist render as styled concatenations in body —
         // these fallbacks are unreachable for them.
         case .checklist: return ((block.checked ?? false) ? "☑ " : "☐ ") + text
@@ -1705,6 +1704,12 @@ struct BlockRowContainer<Content: View>: View, Equatable {
             content()
                 .overlay { selectionClickCatcher }
         }
+        // Nested list items inset the WHOLE row (handle included) by level —
+        // the gutter travels with its item, so a nested bullet reads as a
+        // child, not as a bullet that drifted. The inset is a plain padding
+        // change on this row alone, so the spring moves only this row.
+        .padding(.leading, listInset)
+        .animation(reduceMotion ? nil : ProMotionSprings.sidebar, value: listInset)
         .padding(.top, topSpacing)
         .opacity(rowOpacity)
         // Scoped to this row's own dim value — the old list-level animation
@@ -1719,6 +1724,10 @@ struct BlockRowContainer<Content: View>: View, Equatable {
     /// the dims guard so the feature costs nothing when off — and they read
     /// `hasFocusedBlock` + the row's OWN focus state, so a focus move re-dims
     /// two rows instead of re-rendering every container.
+    private var listInset: CGFloat {
+        CGFloat(block.listIndentLevel) * RichListIndent.insetPerLevel
+    }
+
     private var rowOpacity: Double {
         guard dimsInactiveBlocks,
               !selectionCoordinator.isActive,

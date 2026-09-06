@@ -52,6 +52,10 @@ actor InboxAtlasRouter {
         /// The capture is CRAFT REFERENCE — saved for its form, not its claims.
         /// It becomes a swipe; SwipeIntakeRouter decides page vs frame vs note.
         case fileAsSwipe
+        /// The capture is a SOURCE saved for its content — a link to read,
+        /// watch, or cite. It becomes a research source (never a swipe), in a
+        /// workspace's materials, linked to a concept page, or in the Library.
+        case fileAsResearch
     }
 
     struct RoutedMove: Sendable, Equatable {
@@ -117,14 +121,16 @@ actor InboxAtlasRouter {
         text: String,
         heuristicTitle: String,
         candidates: [InboxDestinationAtlas.ScoredEntry],
-        corrections: [InboxRoutingCorrectionLedger.Example]
+        corrections: [InboxRoutingCorrectionLedger.Example],
+        lensHint: String? = nil
     ) async -> Decision? {
         guard !candidates.isEmpty else { return nil }
         let prompt = Self.buildPrompt(
             text: text,
             heuristicTitle: heuristicTitle,
             candidates: candidates,
-            corrections: corrections
+            corrections: corrections,
+            lensHint: lensHint
         )
 
         var raw: String?
@@ -235,7 +241,10 @@ actor InboxAtlasRouter {
     - "placeThinkspace" — it fits a workspace but no cluster there. targetKey = thinkspace key.
     - "feedSeedling" — the capture adds mass to one of the GROWING SEEDLINGS listed (a named \
     proto-concept still accruing thoughts before it earns a page). targetKey = that seedling's key. \
-    Suggest it when the capture clearly develops that named concept. Pages and Groups remain valid homes for ordinary thoughts.
+    A THOUGHT THAT DEVELOPS A NAMED GROWING CONCEPT FEEDS IT: the seedling is where such thoughts \
+    belong, and a Page or Group is for material — never for a thought about a concept the user is \
+    already growing. Match on the seedling's name, its aliases, and the thoughts it already holds; \
+    a capture that would sit naturally beside those thoughts feeds the seedling.
     - "startSeedling" — the capture states a reusable principle, framework, or named idea that no \
     listed seedling or concept page covers. newTitle = a noun-phrase name for the concept. The \
     seedling grows in the nursery — no page and no canvas object is created until it ripens and the \
@@ -261,9 +270,18 @@ actor InboxAtlasRouter {
     written, laid out, or sold — rather than for what it claims. No targetKey. A sales page, a \
     landing page, an ad, a screenshot of someone's post, a headline or a piece of copy with no \
     question attached is a swipe. THE FORM TEST, applied literally: would the user open this again \
-    to COPY HOW IT IS BUILT, or to LEARN WHAT IT SAYS? Copy-how → fileAsSwipe. Learn-what → any \
-    other move. A capture that asks a question, states a fact worth remembering, or names something \
-    to do is NEVER a swipe, even when it carries a link.
+    to COPY HOW IT IS BUILT, or to LEARN WHAT IT SAYS? Copy-how → fileAsSwipe. Learn-what → \
+    fileAsResearch when the capture IS a source (a link, a video, a paper), or another move when the \
+    capture is itself a thought. A capture that asks a question, states a fact worth remembering, \
+    or names something to do is NEVER a swipe, even when it carries a link.
+    - "fileAsResearch" — the capture is a SOURCE saved for its CONTENT: a link, video, talk, paper, \
+    or article the user wants to read, watch, study, or cite later ("watch this", "read later", \
+    "study this", a bare link with no craft intent, a link plus a note about what it says). It \
+    becomes a research source — never a swipe. targetKey = the WORKSPACE whose subjects it serves \
+    (the source lands with that workspace's materials, ready for Study), or a CONCEPT PAGE it is a \
+    source for (it links to the page and waits in its References), or null when neither is \
+    obvious (the Library). When the input carries a LINK LENS line measured by the app, treat it \
+    as strong evidence between fileAsSwipe and fileAsResearch.
 
     HOW TO DECIDE (in order):
     1. TYPE TEST — what is this capture? A task/reminder ("do X", "follow up", a deadline) → \
@@ -279,10 +297,11 @@ actor InboxAtlasRouter {
     RESEARCH GETS A ROOM — a capture that names something to research or understand (not a fact, \
     not a task) becomes an inquiry: startInquiry in the workspace it belongs to, or \
     germinateDeepDive when no workspace fits. Filing a research intent as a Page loses it.
-    5. MATCH THE USER’S WORK — Pages and Groups are valid homes for thoughts and writing. \
-    Suggest Concept development only when it clearly develops a named concept; it is optional. \
-    A Page destination attaches a reference; a Group destination adds membership. No suggestion \
-    changes authored section order or creates a canvas layout.
+    5. MATCH THE USER’S WORK — Pages and Groups are valid homes for material and writing. A \
+    thought about a concept that is GROWING (a listed seedling) feeds that seedling — that is what \
+    the nursery is for; suggest startSeedling when a capture names a reusable idea no seedling or \
+    page covers. A Page destination attaches a reference; a Group destination adds membership. No \
+    suggestion changes authored section order or creates a canvas layout.
     6. ABSTAIN OVER GUESS — if two destinations feel equally plausible, or nothing fits, return \
     fewer moves or none. moves: [] is a correct, honest answer. Guessing wrong is worse.
 
@@ -358,6 +377,16 @@ actor InboxAtlasRouter {
     "growth":"A hook squarely in Deshawn's personal-finance lane.","confidence":0.85}]}
     (Money is Deshawn's niche. Mara being the most-worked-with client is not evidence.)
 
+    Example C2 — a link saved to LEARN from becomes a research source in its workspace:
+    Capture: "https://youtu.be/E_kVAVk9ioU — talk on how sleep debt wrecks decision making"
+    LINK LENS: Research — Unrecognised source
+    DESTINATIONS include workspace {"key":"thinkspace-W3"} Health & Performance.
+    → {"title":"Talk: sleep debt and decision making","captureType":"source","moves":[{"kind":"fileAsResearch",\
+    "targetKey":"thinkspace-W3","section":null,"newTitle":null,"parentQuestionKey":null,"homeKey":null,\
+    "growth":"Adds a source to Health & Performance's materials, ready to open in Study.","confidence":0.85}]}
+    (A talk is watched to LEARN what it says — research, not a swipe. Had no workspace fit, targetKey \
+    would be null and the source would land in the Library.)
+
     Example D — a task never routes to knowledge destinations:
     Capture: "remember to send the invoice thursday"
     → {"title":"Send the invoice Thursday","captureType":"task","moves":[]}
@@ -391,11 +420,18 @@ actor InboxAtlasRouter {
         text: String,
         heuristicTitle: String,
         candidates: [InboxDestinationAtlas.ScoredEntry],
-        corrections: [InboxRoutingCorrectionLedger.Example]
+        corrections: [InboxRoutingCorrectionLedger.Example],
+        lensHint: String? = nil
     ) -> String {
         var lines = destinationAndCorrectionLines(candidates: candidates, corrections: corrections)
         lines.append("\nCAPTURE (heuristic title: \(heuristicTitle)):")
         lines.append(String(text.prefix(1600)))
+        // The app measured the link's lens (platform family, page shape,
+        // the user's own past decisions for this domain) — the model sees
+        // the verdict and its reason, never a bare label.
+        if let lensHint {
+            lines.append("\nLINK LENS (measured by the app from the link itself): \(lensHint). Strong evidence between fileAsSwipe and fileAsResearch; override only when the user's own words say otherwise.")
+        }
         lines.append("\nReturn the routing JSON now.")
         return lines.joined(separator: "\n")
     }
@@ -430,7 +466,7 @@ actor InboxAtlasRouter {
             (.question, "OPEN QUESTIONS:"),
             (.deepDive, "RESEARCH TOPICS:"),
             (.connection, "CONCEPT PAGES:"),
-            (.seedling, "GROWING SEEDLINGS (optional concept development):"),
+            (.seedling, "GROWING SEEDLINGS (thoughts about these concepts feed them):"),
             (.group, "GROUPS (membership only):"),
             (.page, "PAGES (attach original reference; never rewrite):"),
             (.cluster, "LEGACY GROUPS:"),
@@ -601,6 +637,13 @@ actor InboxAtlasRouter {
             // destination, and which KIND of swipe is SwipeIntakeRouter's
             // call, never the router's. Any key the model attached is noise.
             targetKey = nil
+            section = nil
+        case .fileAsResearch:
+            // A source may name its room (a workspace) or the page it is a
+            // source for (a concept); anything else means the Library.
+            if let key = targetKey, let kind = entriesByKey[key]?.kind, kind != .thinkspace && kind != .connection {
+                targetKey = nil
+            }
             section = nil
         }
 

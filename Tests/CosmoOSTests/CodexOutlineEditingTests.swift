@@ -99,6 +99,34 @@ final class CodexOutlineEditingTests: XCTestCase {
         XCTAssertEqual(outline.slides[1].note, nil)
     }
 
+    func testMoveSlideToSlotShiftsEverythingBetweenAndRenumbers() {
+        let ids = (0..<4).map { _ in UUID() }
+        var outline = CodexOutlineModel(arcShape: nil, slides: ids.enumerated().map { index, id in
+            makeSlide(id: id, position: index + 1, note: "Slide \(index + 1)")
+        })
+
+        XCTAssertTrue(CodexOutlineEditing.moveSlide(ids[0], toSlot: 2, in: &outline))
+        XCTAssertEqual(outline.slides.map(\.id), [ids[1], ids[2], ids[0], ids[3]])
+        XCTAssertEqual(outline.slides.map(\.position), [1, 2, 3, 4])
+
+        XCTAssertTrue(CodexOutlineEditing.moveSlide(ids[3], toSlot: 0, in: &outline))
+        XCTAssertEqual(outline.slides.map(\.id), [ids[3], ids[1], ids[2], ids[0]])
+        XCTAssertEqual(outline.slides.map(\.position), [1, 2, 3, 4])
+    }
+
+    func testMoveSlideToSlotRefusesNoOpsAndBadSlots() {
+        let ids = (0..<2).map { _ in UUID() }
+        var outline = CodexOutlineModel(arcShape: nil, slides: ids.enumerated().map { index, id in
+            makeSlide(id: id, position: index + 1, note: nil)
+        })
+        let before = outline
+
+        XCTAssertFalse(CodexOutlineEditing.moveSlide(ids[0], toSlot: 0, in: &outline))
+        XCTAssertFalse(CodexOutlineEditing.moveSlide(ids[0], toSlot: 5, in: &outline))
+        XCTAssertFalse(CodexOutlineEditing.moveSlide(UUID(), toSlot: 1, in: &outline))
+        XCTAssertEqual(outline, before)
+    }
+
     func testRemoveEmptySlideReturnsPreviousSlideForFocus() {
         let firstID = UUID()
         let emptyID = UUID()

@@ -58,27 +58,11 @@ final class SwipeClassificationEngine: ObservableObject {
             let parsed = parseResponse(response)
 
             if let parsed = parsed {
-                // Resolve creator — AI handle first, oEmbed author fallback
-                var creatorHandle = parsed.creatorHandle
-                var creatorName = parsed.creatorName
-
-                // Fallback: if AI didn't find a handle, use oEmbed author name
-                if creatorHandle == nil || creatorHandle?.replacingOccurrences(of: "@", with: "").allSatisfy(\.isNumber) == true {
-                    let oembedAuthor = atom.richContent?.author ?? ""
-                    if !oembedAuthor.isEmpty && !oembedAuthor.allSatisfy(\.isNumber) {
-                        // Normalize: "Ben Allgeyer | Real Estate Investor" → handle "@ben_allgeyer"
-                        let handleBase = oembedAuthor
-                            .components(separatedBy: "|").first?
-                            .trimmingCharacters(in: .whitespaces) ?? oembedAuthor
-                        creatorHandle = "@" + handleBase
-                            .lowercased()
-                            .replacingOccurrences(of: " ", with: "_")
-                            .filter { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." }
-                        creatorName = creatorName ?? oembedAuthor
-                            .components(separatedBy: "|").first?
-                            .trimmingCharacters(in: .whitespaces) ?? oembedAuthor
-                    }
-                }
+                // Resolve creator — the real username first, then the AI's
+                // handle, then the display name (CreatorIdentity, the one copy).
+                let effective = CreatorIdentity.effectiveCreator(aiHandle: parsed.creatorHandle, aiName: parsed.creatorName, atom: atom)
+                let creatorHandle = effective.handle
+                let creatorName = effective.name
 
                 let creatorUUID = await resolveCreator(
                     handle: creatorHandle,
@@ -459,70 +443,20 @@ final class SwipeClassificationEngine: ObservableObject {
 
     // MARK: - Creator Resolution
 
-    /// 60s creator-list cache: batch classification resolved creators once
-    /// per swipe with a full-table fetch each time (4 queries/swipe).
-    private static var creatorCache: (atoms: [Atom], fetchedAt: Date)?
-
-    private static func cachedCreators() async throws -> [Atom] {
-        if let cache = creatorCache, Date().timeIntervalSince(cache.fetchedAt) < 60 {
-            return cache.atoms
-        }
-        let fresh = try await AtomRepository.shared.fetchCreators()
-        creatorCache = (fresh, Date())
-        return fresh
-    }
-
-    private static func invalidateCreatorCache() {
-        creatorCache = nil
-    }
-
-    /// Find or create a creator atom based on handle/name from the AI response.
-    /// Returns the creator's UUID if resolved.
-    /// Internal: SwipeInsightEngine delegates creator resolution here.
+    /// Find or create the creator a handle belongs to, through the one
+    /// directory (normalized key, honest platform, twin-aware matching), and
+    /// link the swipe both ways. Internal: SwipeInsightEngine and the
+    /// artifact analyzer delegate here.
     func resolveCreator(handle: String?, name: String?, atom: Atom) async -> String? {
-        guard let handle = handle, !handle.isEmpty else { return nil }
-
-        // Skip purely numeric handles (Instagram user IDs leaked through)
-        let stripped = handle.replacingOccurrences(of: "@", with: "")
-        guard !stripped.allSatisfy(\.isNumber) else { return nil }
-
-        // Normalize handle
-        let normalizedHandle = handle.hasPrefix("@") ? handle : "@\(handle)"
-        let displayName = name ?? normalizedHandle
-
-        // Detect platform from atom metadata
-        let platform = atom.researchMetadata?.contentSource ?? "unknown"
-
-        // Backfill: if the stored author was a numeric ID, update it with the real handle
-        await backfillAuthor(normalizedHandle, on: atom)
-
+        guard let key = CreatorIdentity.key(handle) else { return nil }
+        let derived = CreatorIdentity.isDerivedFromDisplayName(handle: handle, atom: atom)
+        await backfillAuthor(CreatorIdentity.displayHandle(key), on: atom)
         do {
-            // Search existing creators by handle (60s cache — batch classification
-            // was re-fetching the whole creators table once per swipe).
-            let existing = try await Self.cachedCreators()
-            let match = existing.first { creator in
-                guard let meta = creator.metadataValue(as: CreatorMetadata.self) else { return false }
-                return meta.handle?.lowercased() == normalizedHandle.lowercased()
-            }
-
-            if let match = match {
-                // Link swipe to creator
-                await linkSwipeToCreator(swipeAtom: atom, creatorUUID: match.uuid)
-                return match.uuid
-            }
-
-            // Create new creator
-            let newCreator = try await AtomRepository.shared.createCreator(
-                name: displayName,
-                handle: normalizedHandle,
-                platform: platform
-            )
-            Self.invalidateCreatorCache() // next resolve must see the new creator
-
-            // Link swipe to creator
-            await linkSwipeToCreator(swipeAtom: atom, creatorUUID: newCreator.uuid)
-
-            return newCreator.uuid
+            guard let creator = try await CreatorDirectory.shared.resolve(
+                handle: handle, name: name, platform: CreatorIdentity.platform(for: atom), derivedFromName: derived
+            ) else { return nil }
+            await linkSwipeToCreator(swipeAtom: atom, creatorUUID: creator.uuid)
+            return creator.uuid
         } catch {
             print("SwipeClassificationEngine: Creator resolution failed: \(error)")
             return nil

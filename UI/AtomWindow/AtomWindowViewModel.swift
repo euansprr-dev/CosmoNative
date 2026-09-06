@@ -1,6 +1,7 @@
 // CosmoOS/UI/AtomWindow/AtomWindowViewModel.swift
 // State management for the floating atom viewer panel
 
+import AppKit
 import SwiftUI
 
 @Observable @MainActor
@@ -20,37 +21,27 @@ final class AtomWindowViewModel {
     var canGoBack: Bool { !backStack.isEmpty }
     var canGoForward: Bool { !forwardStack.isEmpty }
 
-    // MARK: - Search
+    // MARK: - Switcher
 
-    var isSearchVisible = false
-    var searchQuery = ""
-    var searchResults: [AtomSearchResult] = []
-    var selectedSearchIndex = 0
-    var selectedTypeFilter: AtomType?
+    /// The search/browse surface. It is the window's home when nothing is
+    /// open, and the layer "Back" lifts over an open item.
+    let switcher = AtomSwitcherModel()
+    private(set) var switcherRequested = false
+
+    var isSwitcherVisible: Bool {
+        switcherRequested || (currentAtom == nil && !isLoading)
+    }
 
     // MARK: - Bookmarks
 
     var bookmarkedUUIDs: Set<String> = []
 
-    // MARK: - Recent Atoms (empty state)
-
-    var recentAtoms: [Atom] = []
-
     // MARK: - Private
 
     private let maxHistorySize = 50
-    private var searchTask: Task<Void, Never>?
-    private let searchEngine = AtomSearchEngine()
 
     private let bookmarksKey = "atomWindowBookmarks"
     private let lastAtomKey = "atomWindowLastAtomUUID"
-
-    // User-facing types for search results
-    private let searchableTypes: [AtomType] = [
-        .idea, .content, .research, .connection, .note,
-        .task, .project, .journalEntry, .objective, .stickyNote,
-        .clientProfile, .blockTemplate
-    ]
 
     // MARK: - Init
 
@@ -61,7 +52,10 @@ final class AtomWindowViewModel {
     // MARK: - Navigation
 
     func navigate(to uuid: String) async {
-        guard uuid != currentAtom?.uuid else { return }
+        guard uuid != currentAtom?.uuid else {
+            dismissSwitcher()
+            return
+        }
 
         isLoading = true
         defer { isLoading = false }
@@ -83,6 +77,7 @@ final class AtomWindowViewModel {
                 currentAtom = atom
                 AtomRepository.shared.acquireEditingLock(uuid: uuid)
                 saveSession()
+                dismissSwitcher()
             }
         } catch {
             print("[AtomWindow] Failed to fetch atom \(uuid): \(error)")
@@ -106,6 +101,7 @@ final class AtomWindowViewModel {
                 currentAtom = atom
                 AtomRepository.shared.acquireEditingLock(uuid: previousUUID)
                 saveSession()
+                dismissSwitcher()
             }
         } catch {
             print("[AtomWindow] Failed to go back to \(previousUUID): \(error)")
@@ -129,76 +125,96 @@ final class AtomWindowViewModel {
                 currentAtom = atom
                 AtomRepository.shared.acquireEditingLock(uuid: nextUUID)
                 saveSession()
+                dismissSwitcher()
             }
         } catch {
             print("[AtomWindow] Failed to go forward to \(nextUUID): \(error)")
         }
     }
 
-    // MARK: - Search
+    // MARK: - Switcher
 
-    func performSearch() {
-        searchTask?.cancel()
-
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
-            searchResults = []
-            selectedSearchIndex = 0
-            return
-        }
-
-        searchTask = Task {
-            // Debounce 200ms
-            try? await Task.sleep(for: .milliseconds(200))
-            guard !Task.isCancelled else { return }
-
-            do {
-                var options = AtomSearchOptions.default
-                options.limit = 20
-                if let typeFilter = selectedTypeFilter {
-                    options.types = [typeFilter]
-                } else {
-                    options.types = searchableTypes
-                }
-
-                let results = try await searchEngine.search(query: query, options: options)
-                guard !Task.isCancelled else { return }
-
-                searchResults = results
-                selectedSearchIndex = 0
-            } catch {
-                guard !Task.isCancelled else { return }
-                print("[AtomWindow] Search failed: \(error)")
-                searchResults = []
-            }
+    /// Lift the switcher over the open item (Back, the title button, ⌘K).
+    func showSwitcher() {
+        switcher.present(openAtom: currentAtom, pinnedUUIDs: bookmarkedUUIDs)
+        withAnimation(ProMotionSprings.modal) {
+            switcherRequested = true
         }
     }
 
-    func openSearchResult(at index: Int) async {
-        guard index >= 0, index < searchResults.count else { return }
-        let result = searchResults[index]
-        isSearchVisible = false
-        searchQuery = ""
-        searchResults = []
-        await navigate(to: result.atom.uuid)
+    /// Drop the switcher layer. With nothing open the switcher IS the
+    /// window's home, so this only ever hides it over an item.
+    func dismissSwitcher() {
+        guard switcherRequested else { return }
+        withAnimation(ProMotionSprings.modal) {
+            switcherRequested = false
+        }
+        if currentAtom != nil {
+            switcher.dismiss()
+        }
     }
 
-    func moveSearchSelection(by offset: Int) {
-        guard !searchResults.isEmpty else { return }
-        let newIndex = selectedSearchIndex + offset
-        selectedSearchIndex = max(0, min(newIndex, searchResults.count - 1))
+    func toggleSwitcher() {
+        if switcherRequested {
+            dismissSwitcher()
+        } else {
+            showSwitcher()
+        }
+    }
+
+    /// The switcher is the home surface: make sure it is loaded whenever the
+    /// window shows without an open item.
+    func presentSwitcherHome() {
+        switcher.present(openAtom: nil, pinnedUUIDs: bookmarkedUUIDs)
+    }
+
+    /// Esc inside the switcher: clear the query, then the layer, then the
+    /// window — resolved by the model, executed here.
+    func escapeSwitcher() {
+        switch switcher.escapeAction {
+        case .clearQuery:
+            switcher.clearQuery()
+        case .returnToOpenItem:
+            dismissSwitcher()
+        case .closeWindow:
+            AtomWindowPanelController.shared.hide()
+        }
+    }
+
+    func open(_ row: AtomSwitcherRow) {
+        Task { await navigate(to: row.uuid) }
+    }
+
+    /// ⌘Return — hand the item to the main window and step aside.
+    func openInMainWindow(_ row: AtomSwitcherRow) {
+        NSApp.activate(ignoringOtherApps: true)
+        NotificationCenter.default.post(
+            name: .init("com.cosmo.navigateToAtom"),
+            object: nil,
+            userInfo: ["uuid": row.uuid]
+        )
+        AtomWindowPanelController.shared.hide()
+    }
+
+    func togglePin(_ row: AtomSwitcherRow) {
+        togglePin(uuid: row.uuid)
     }
 
     // MARK: - Bookmarks
 
     func toggleBookmark() {
         guard let uuid = currentAtom?.uuid else { return }
+        togglePin(uuid: uuid)
+    }
+
+    private func togglePin(uuid: String) {
         if bookmarkedUUIDs.contains(uuid) {
             bookmarkedUUIDs.remove(uuid)
         } else {
             bookmarkedUUIDs.insert(uuid)
         }
         saveBookmarks()
+        switcher.setPinned(bookmarkedUUIDs)
     }
 
     var isCurrentBookmarked: Bool {
@@ -208,12 +224,16 @@ final class AtomWindowViewModel {
 
     // MARK: - Create
 
-    func createNewAtom(type: AtomType) async {
+    func createNewAtom(type: AtomType, title: String? = nil) async {
         if !database.isReady {
             print("[AtomWindow] createNewAtom requested before database reported ready — type=\(type.rawValue)")
         }
 
-        let atom = Atom.new(type: type, title: "New \(type.displayName)")
+        let resolvedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let atom = Atom.new(
+            type: type,
+            title: resolvedTitle?.isEmpty == false ? resolvedTitle! : "New \(type.displayName)"
+        )
 
         do {
             let created = try await AtomRepository.shared.create(atom)
@@ -221,12 +241,11 @@ final class AtomWindowViewModel {
                 print("[AtomWindow] Created atom missing on immediate fetch — uuid=\(created.uuid) type=\(created.type.rawValue)")
                 currentAtom = created
                 saveSession()
-                await refreshRecentAtoms()
+                dismissSwitcher()
                 return
             }
 
             await navigate(to: persisted.uuid)
-            await refreshRecentAtoms()
         } catch {
             print("[AtomWindow] Failed to create atom — type=\(type.rawValue) error=\(error)")
         }
@@ -249,7 +268,7 @@ final class AtomWindowViewModel {
                     currentAtom = latest
                 } else {
                     unloadCurrentSession()
-                    await refreshRecentAtoms()
+                    presentSwitcherHome()
                 }
             } catch {
                 print("[AtomWindow] Could not refresh retained item: \(error)")
@@ -263,10 +282,9 @@ final class AtomWindowViewModel {
             print("[AtomWindow] Restoring last session atom uuid=\(uuid)")
             await navigate(to: uuid)
         }
-        // Recents only serve the empty state; don't put an unused query on
-        // the critical path to opening the last document.
+        // Nothing to restore: the switcher is the home surface.
         if currentAtom == nil, !Task.isCancelled {
-            await refreshRecentAtoms()
+            presentSwitcherHome()
         }
     }
 
@@ -284,25 +302,17 @@ final class AtomWindowViewModel {
         releaseCurrentLock()
         currentAtom = nil
         isLoading = false
-        isSearchVisible = false
-        searchQuery = ""
-        searchResults = []
-        selectedSearchIndex = 0
-        selectedTypeFilter = nil
+        switcherRequested = false
+        switcher.reset()
         backStack.removeAll()
         forwardStack.removeAll()
-        searchTask?.cancel()
-        searchTask = nil
     }
 
-    // MARK: - Recent Atoms Refresh
-
-    func refreshRecentAtoms() async {
-        do {
-            recentAtoms = try await AtomRepository.shared.fetchRecent(limit: 8)
-        } catch {
-            print("[AtomWindow] Failed to refresh recent atoms: \(error)")
-        }
+    /// The window is ordering out: the switcher layer never survives a hide
+    /// (⌥E reopens onto the item, exactly as it was left).
+    func prepareForHide() {
+        switcherRequested = false
+        switcher.dismiss()
     }
 
     // MARK: - Persistence Helpers

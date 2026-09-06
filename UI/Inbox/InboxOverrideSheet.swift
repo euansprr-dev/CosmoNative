@@ -5,8 +5,12 @@ import SwiftUI
 /// September 2026: every place a capture can go lives here — capture lanes
 /// (the capture stays a capture), inquiry Spaces (the capture becomes a
 /// resumable research session, in an existing Space or a new one named for
-/// the topic), and the filing destinations (Pages, Groups, clients, Swipe,
-/// Today). `focus` only decides which family is listed first.
+/// the topic), growing concepts (the thought feeds a seedling, or names a
+/// new one), and the filing destinations (Pages, Groups, clients, Swipe,
+/// Today, the Library's research shelf). A link or scanned pages can be
+/// saved to a Space, Group, Page, or Concept as a RESEARCH SOURCE instead
+/// of a Page — the "Save as" control on the row. `focus` only decides
+/// which family is listed first.
 struct InboxOverrideSheet: View {
     let item: InboxItem
     @Bindable var viewModel: InboxViewModel
@@ -16,6 +20,7 @@ struct InboxOverrideSheet: View {
     @State private var selected: Choice?
     @State private var action: InboxFilingAction = .page
     @State private var newSpaceName = ""
+    @State private var newConceptName = ""
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var error: String?
@@ -27,6 +32,8 @@ struct InboxOverrideSheet: View {
         case lane(CaptureDestination)
         case inquiry(InquirySpaceOption)
         case newSpaceInquiry
+        case seedling(Seedling)
+        case newSeedling
 
         var id: String {
             switch self {
@@ -34,6 +41,8 @@ struct InboxOverrideSheet: View {
             case .lane(let lane): return "lane:\(lane.uuid)"
             case .inquiry(let space): return "inquiry:\(space.id)"
             case .newSpaceInquiry: return "inquiry:new"
+            case .seedling(let seedling): return "seedling:\(seedling.uuid)"
+            case .newSeedling: return "seedling:new"
             }
         }
 
@@ -43,6 +52,8 @@ struct InboxOverrideSheet: View {
             case .lane(let lane): return lane.name
             case .inquiry(let space): return space.name
             case .newSpaceInquiry: return "New Space…"
+            case .seedling(let seedling): return seedling.name
+            case .newSeedling: return "New concept…"
             }
         }
 
@@ -52,6 +63,8 @@ struct InboxOverrideSheet: View {
             case .lane(let lane): return "Lanes › \(lane.name)"
             case .inquiry(let space): return "\(space.name) › Inquiries"
             case .newSpaceInquiry: return "A Space named for the topic, with the inquiry inside"
+            case .seedling(let seedling): return "Growing · \(seedling.massSummary)"
+            case .newSeedling: return "A seedling in the nursery, this thought its first seed"
             }
         }
 
@@ -61,6 +74,8 @@ struct InboxOverrideSheet: View {
             case .lane(let lane): return lane.icon
             case .inquiry: return "text.magnifyingglass"
             case .newSpaceInquiry: return "plus.square.dashed"
+            case .seedling: return "leaf"
+            case .newSeedling: return "plus.circle.dashed"
             }
         }
     }
@@ -73,13 +88,15 @@ struct InboxOverrideSheet: View {
 
     /// Families in focus order — the one the caller asked for leads.
     private var families: [Family] {
-        let laneChoices = viewModel.lanes.map(Choice.lane)
+        let laneChoices = viewModel.lanes.filter { $0.uuid != item.restingLaneID }.map(Choice.lane)
         let inquiryChoices = viewModel.inquirySpaces.map(Choice.inquiry) + [.newSpaceInquiry]
+        let conceptChoices = viewModel.seedlings.map(Choice.seedling) + [.newSeedling]
         let filingChoices = destinations.map(Choice.filing)
         let all: [Family] = [
             Family(id: .lanes, title: "Capture lanes", choices: laneChoices),
             Family(id: .inquiry, title: "Start an inquiry", choices: inquiryChoices),
-            Family(id: .destinations, title: "Save to", choices: filingChoices)
+            Family(id: .concepts, title: "Growing concepts", choices: conceptChoices),
+            Family(id: .destinations, title: item.canBecomeResearch ? "Save to (as a Page or a Research source)" : "Save to", choices: filingChoices)
         ].filter { !$0.choices.isEmpty }
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let filtered = needle.isEmpty ? all : all.compactMap { family in
@@ -88,9 +105,10 @@ struct InboxOverrideSheet: View {
             }
             return matches.isEmpty ? nil : Family(id: family.id, title: family.title, choices: matches)
         }
+        let leading: InboxOverrideFocus = viewModel.overrideFocus == .research ? .destinations : viewModel.overrideFocus
         return filtered.sorted { lhs, rhs in
-            if lhs.id == viewModel.overrideFocus { return true }
-            if rhs.id == viewModel.overrideFocus { return false }
+            if lhs.id == leading { return true }
+            if rhs.id == leading { return false }
             return false
         }
     }
@@ -129,7 +147,7 @@ struct InboxOverrideSheet: View {
     private var searchField: some View {
         HStack(spacing: DS.space8) {
             Image(systemName: "magnifyingglass").foregroundStyle(DS.textMuted)
-            TextField("Search Spaces, lanes, Groups, Pages, clients…", text: $query)
+            TextField("Search Spaces, lanes, concepts, Pages, clients…", text: $query)
                 .textFieldStyle(.plain).font(DS.body).focused($searchFocused)
                 .accessibilityLabel("Search destinations")
         }
@@ -146,7 +164,7 @@ struct InboxOverrideSheet: View {
                             .padding(DS.space16).accessibilityHidden(true)
                     }
                 } else if families.isEmpty {
-                    Text("No destinations match. Try a Space, lane, Page, Group, or client name.")
+                    Text("No destinations match. Try a Space, lane, concept, Page, Group, or client name.")
                         .font(DS.body).foregroundStyle(DS.textSecondary).padding(DS.space24)
                 } else {
                     ForEach(families) { family in
@@ -174,10 +192,12 @@ struct InboxOverrideSheet: View {
                 switch selected {
                 case .filing(let destination):
                     Text(destination.path).font(DS.headline).foregroundStyle(DS.text).lineLimit(2)
-                    if destination.kind == .page {
+                    let options = actionOptions(for: destination)
+                    if options.count > 1 {
                         Picker("Save as", selection: $action) {
-                            Text("Reference").tag(InboxFilingAction.reference)
-                            Text("New child Page").tag(InboxFilingAction.childPage)
+                            ForEach(options, id: \.self) { option in
+                                Text(saveAsLabel(option)).tag(option)
+                            }
                         }
                         .pickerStyle(.segmented)
                     }
@@ -201,6 +221,19 @@ struct InboxOverrideSheet: View {
                     Text("Creates a Space named for the topic and starts the inquiry inside it. \(inquiryConsequence)")
                         .font(DS.subheadline).foregroundStyle(DS.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
+                case .seedling(let seedling):
+                    Text("Grows \u{201C}\(seedling.name)\u{201D}").font(DS.headline).foregroundStyle(DS.text).lineLimit(2)
+                    Text("Adds this thought to the concept (\(seedling.massSummary)). No page and no canvas object — the concept ripens toward one development conversation.")
+                        .font(DS.subheadline).foregroundStyle(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .newSeedling:
+                    TextField("Concept name", text: $newConceptName)
+                        .textFieldStyle(.plain).font(DS.headline).foregroundStyle(DS.text)
+                        .padding(DS.space10).dsGlassInput(cornerRadius: 10)
+                        .accessibilityLabel("New concept name")
+                    Text("Names a new concept in the nursery with this thought as its first seed. A live concept with the same name is fed instead of forked.")
+                        .font(DS.subheadline).foregroundStyle(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(DS.space16).frame(maxWidth: .infinity, alignment: .leading)
@@ -211,6 +244,35 @@ struct InboxOverrideSheet: View {
 
     private var inquiryConsequence: String {
         "This capture becomes the inquiry's question, ready to resume any time. Anything beyond the question becomes its first note."
+    }
+
+    /// The actions a destination can take for THIS capture. A link or scanned
+    /// pages can become a Research source wherever the destination accepts
+    /// one; plain prose keeps the page grammar.
+    private func actionOptions(for destination: InboxFilingDestination) -> [InboxFilingAction] {
+        let research = item.canBecomeResearch && destination.acceptsResearch
+        switch destination.kind {
+        case .page: return research ? [.reference, .childPage, .research] : [.reference, .childPage]
+        case .connection: return research ? [.stageConnection, .research] : [.stageConnection]
+        case .space, .group, .pages: return research ? [.page, .research] : [.page]
+        case .research: return [.research]
+        case .ideas: return [.idea]
+        case .swipe: return [.swipe]
+        case .today: return [.task]
+        }
+    }
+
+    private func saveAsLabel(_ action: InboxFilingAction) -> String {
+        switch action {
+        case .page: return "Page"
+        case .childPage: return "New child Page"
+        case .reference: return "Reference"
+        case .stageConnection: return "For review"
+        case .research: return "Research source"
+        case .idea: return "Idea"
+        case .swipe: return "Swipe"
+        case .task: return "Task"
+        }
     }
 
     private var footer: some View {
@@ -234,6 +296,8 @@ struct InboxOverrideSheet: View {
         case .lane: return "Move to lane"
         case .inquiry: return "Start inquiry"
         case .newSpaceInquiry: return "Create Space & start inquiry"
+        case .seedling: return "Grow concept"
+        case .newSeedling: return "Start concept"
         case nil: return "Save"
         }
     }
@@ -241,6 +305,7 @@ struct InboxOverrideSheet: View {
     private var canCommit: Bool {
         switch selected {
         case .newSpaceInquiry: return !newSpaceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .newSeedling: return !newConceptName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case nil: return false
         default: return true
         }
@@ -248,9 +313,17 @@ struct InboxOverrideSheet: View {
 
     private func select(_ choice: Choice) {
         selected = choice
-        if case .filing(let destination) = choice { action = destination.defaultAction }
+        if case .filing(let destination) = choice {
+            // Opened to save research: the research action leads wherever
+            // the destination can take one.
+            let wantsResearch = viewModel.overrideFocus == .research && item.canBecomeResearch && destination.acceptsResearch
+            action = wantsResearch ? .research : destination.defaultAction
+        }
         if case .newSpaceInquiry = choice, newSpaceName.isEmpty {
             newSpaceName = item.title ?? String(item.rawText.prefix(48))
+        }
+        if case .newSeedling = choice, newConceptName.isEmpty {
+            newConceptName = item.title ?? String(item.rawText.prefix(48))
         }
         error = nil
     }
@@ -259,7 +332,12 @@ struct InboxOverrideSheet: View {
         do {
             destinations = try await InboxPlacementService.shared.destinations()
             isLoading = false
-            if let first = families.first?.choices.first { select(first) }
+            if viewModel.overrideFocus == .research,
+               let library = destinations.first(where: { $0.kind == .research }) {
+                select(.filing(library))
+            } else if let first = families.first?.choices.first {
+                select(first)
+            }
             searchFocused = true
         } catch {
             isLoading = false
@@ -273,8 +351,13 @@ struct InboxOverrideSheet: View {
         defer { isSaving = false }
         switch selected {
         case .filing(let destination):
-            error = await viewModel.fileCapture(item, destination: destination, action: action)
-            if error == nil { dismiss() }
+            if action == .research {
+                await viewModel.fileAsResearch(item, destination: destination)
+                dismiss()
+            } else {
+                error = await viewModel.fileCapture(item, destination: destination, action: action)
+                if error == nil { dismiss() }
+            }
         case .lane(let lane):
             await viewModel.moveToLane(item, lane: lane)
             dismiss()
@@ -283,6 +366,12 @@ struct InboxOverrideSheet: View {
             dismiss()
         case .newSpaceInquiry:
             await viewModel.startInquiry(item, in: .new(name: newSpaceName))
+            dismiss()
+        case .seedling(let seedling):
+            await viewModel.growSeedling(item, seedling: seedling)
+            dismiss()
+        case .newSeedling:
+            await viewModel.startSeedling(item, named: newConceptName)
             dismiss()
         }
     }

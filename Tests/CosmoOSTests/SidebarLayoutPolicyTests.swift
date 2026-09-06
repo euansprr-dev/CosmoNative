@@ -555,7 +555,7 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         let destinationChange = try XCTUnwrap(
             mainView.slice(
                 from: ".onChange(of: currentDestination)",
-                to: ".animation(.spring(response: 0.25, dampingFraction: 0.85), value: showCreatorDatabase)"
+                to: ".onAppear {"
             )
         )
         XCTAssertTrue(destinationChange.contains("switchToThinkspaceForDestination(id: id)"))

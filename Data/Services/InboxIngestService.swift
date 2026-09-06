@@ -423,6 +423,45 @@ final class InboxIngestService {
 
     // MARK: - The Atlas sweep (Stage 3)
 
+    // MARK: - Reconsider filed captures when a concept is born
+
+    private var lastReconsiderAt: Date = .distantPast
+    private var reconsiderTask: Task<Void, Never>?
+    private let reconsiderThrottle: TimeInterval = 10 * 60
+
+    /// A new seedling changes what the router would say about captures it
+    /// already filed toward a folder — a thought that belongs to that concept
+    /// may have been suggested as a Page last week. Re-read the folder-filed,
+    /// still-unactioned captures (bounded, throttled) and adopt ONLY answers
+    /// that now feed a seedling; everything else keeps its suggestion, so
+    /// the queue never churns. Abstains and re-filings are ignored.
+    func reconsiderFiledCaptures(reason: String) {
+        guard Date().timeIntervalSince(lastReconsiderAt) > reconsiderThrottle else { return }
+        guard reconsiderTask == nil else { return }
+        lastReconsiderAt = Date()
+
+        reconsiderTask = Task { @MainActor [weak self] in
+            defer { self?.reconsiderTask = nil }
+            guard let self else { return }
+            do {
+                let filed = try await self.inboxRepo.fetchFiledSuggestions(limit: self.config.sweepBatchLimit)
+                guard !filed.isEmpty else { return }
+                let payload = filed.map { (uuid: $0.uuid, title: $0.title, text: $0.rawText) }
+                let results = await InboxClassificationEngine.shared.sweepClassify(items: payload)
+                var grown = 0
+                for item in filed {
+                    guard let result = results[item.uuid],
+                          result.recommendationBundle.primaryRecommendation?.kind == .feedSeedling else { continue }
+                    await self.storeClassification(result, for: item, context: "InboxIngestService.reconsider(\(reason))")
+                    grown += 1
+                }
+                print("📥 [InboxIngest] Reconsidered \(filed.count) filed capture(s) after \(reason): \(grown) now feed a growing concept")
+            } catch {
+                print("⚠️ [InboxIngest] Reconsider after \(reason) failed: \(error)")
+            }
+        }
+    }
+
     /// Called when the inbox becomes visible. Batches unsorted items through
     /// ONE Atlas call speaking the same move grammar as capture-time routing
     /// (concepts, questions, material, folders) — never per-item, never in

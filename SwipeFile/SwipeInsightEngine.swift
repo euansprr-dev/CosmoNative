@@ -234,26 +234,10 @@ final class SwipeInsightEngine {
         from response: SwipeInsightResponse,
         atom: Atom
     ) -> (handle: String?, name: String?) {
-        var handle = response.creatorHandle
-        var name = response.creatorName
-
-        let isNumeric = handle?
-            .replacingOccurrences(of: "@", with: "")
-            .allSatisfy(\.isNumber) ?? true
-        if handle == nil || isNumeric {
-            let oembedAuthor = atom.richContent?.author ?? ""
-            if !oembedAuthor.isEmpty && !oembedAuthor.allSatisfy(\.isNumber) {
-                let base = oembedAuthor
-                    .components(separatedBy: "|").first?
-                    .trimmingCharacters(in: .whitespaces) ?? oembedAuthor
-                handle = "@" + base
-                    .lowercased()
-                    .replacingOccurrences(of: " ", with: "_")
-                    .filter { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." }
-                name = name ?? base
-            }
-        }
-        return (handle, name)
+        // The one derivation lives in CreatorIdentity — this copy had drifted
+        // from the classifier's.
+        let resolution = CreatorIdentity.effectiveCreator(aiHandle: response.creatorHandle, aiName: response.creatorName, atom: atom)
+        return (resolution.handle, resolution.name)
     }
 
     // MARK: - Response parsing

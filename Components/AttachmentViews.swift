@@ -207,11 +207,30 @@ struct AttachmentPageViewer: View {
                 .help("Next page (→)")
             }
 
+            Button {
+                if let saveRequest { ImageSaveActions.perform(.downloads, request: saveRequest) }
+            } label: {
+                Image(systemName: "square.and.arrow.down")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .circle)
+            .keyboardShortcut("s", modifiers: .command)
+            .help("Save to Downloads (⌘S)")
+            .accessibilityLabel("Save page image")
+            .disabled(saveRequest == nil)
+
             Button("Done") { dismiss() }
                 .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, DS.space16)
         .padding(.vertical, DS.space12)
+    }
+
+    private var saveRequest: ImageSaveRequest? {
+        guard attachments.indices.contains(index) else { return nil }
+        return ImageSaveRequest(.attachment(attachments[index]))
     }
 
     @ViewBuilder
@@ -221,6 +240,8 @@ struct AttachmentPageViewer: View {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
+                    .imageSaveAffordance(saveRequest)
+                    .imageSaveContextMenu(saveRequest)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(DS.space16)
             }

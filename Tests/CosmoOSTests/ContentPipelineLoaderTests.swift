@@ -183,7 +183,7 @@ final class ContentPipelineLoaderTests: XCTestCase {
         try await insert([client])
         let rows = try await insert([
             contentAtom("Full", metadata: meta(phase: "polish", client: client.uuid, extra:
-                #""platform":"instagram","contentFormat":"reel","wordCount":42,"sourceIdeaUUID":"idea-1","status":"scheduled","phaseEnteredAt":"2030-03-03T10:00:00Z","phaseBeforeSchedule":"draft","publishRecords":[{"platform":"instagram","publishedAt":"2030-03-01T09:00:00Z"},{"platform":"linkedin","publishedAt":"2030-03-04T09:00:00Z"}]"#)),
+                #""platform":"instagram","contentFormat":"reel","wordCount":42,"sourceIdeaUUID":"idea-1","status":"scheduled","phaseEnteredAt":"2030-03-03T10:00:00Z","phaseBeforeSchedule":"draft","publishRecords":[{"platform":"instagram","publishedAt":"2030-03-01T09:00:00Z"},{"platform":"linkedin","publishedAt":"2030-03-04T09:00:00Z"}],"boardClearedAt":"2030-03-05T09:00:00Z""#)),
             contentAtom("Sparse", metadata: meta(phase: nil, client: client.uuid, extra: #""platform":"hologram","phase":"not-a-phase""#)),
             contentAtom("Broken", metadata: "not json at all"),
         ])
@@ -199,11 +199,15 @@ final class ContentPipelineLoaderTests: XCTestCase {
         XCTAssertEqual(full.phaseBeforeSchedule, .draft)
         XCTAssertEqual(full.phaseEnteredAt, ISO8601.date(from: "2030-03-03T10:00:00Z"))
         XCTAssertEqual(full.latestPublish?.platform, "linkedin", "the newest publish record is the latest")
+        XCTAssertEqual(full.boardClearedAt, ISO8601.date(from: "2030-03-05T09:00:00Z"))
+        XCTAssertTrue(full.isClearedFromBoard)
 
         let sparse = try XCTUnwrap(items.first { $0.id == rows[1].uuid })
         XCTAssertEqual(sparse.phase, .draft, "an unknown phase reads as a draft, not a decode failure")
         XCTAssertNil(sparse.platform)
         XCTAssertEqual(sparse.clientName, "Josh")
+        XCTAssertNil(sparse.boardClearedAt)
+        XCTAssertFalse(sparse.isClearedFromBoard)
 
         let broken = await ContentPipelineLoader.load(scope: .all)
         XCTAssertTrue(broken.contains { $0.id == rows[2].uuid }, "one malformed metadata blob must not fail the load")

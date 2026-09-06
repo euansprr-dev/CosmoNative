@@ -100,11 +100,13 @@ actor InboxRoutingEngine {
             if !shortlist.isEmpty {
                 let corrections = await InboxRoutingCorrectionLedger.shared
                     .recentExamples(limit: config.atlasCorrectionExamples)
+                let lensHint = await Self.linkLensHint(for: text)
                 if let decision = await InboxAtlasRouter.shared.route(
                     text: text,
                     heuristicTitle: title,
                     candidates: shortlist,
-                    corrections: corrections
+                    corrections: corrections,
+                    lensHint: lensHint
                 ) {
                     atlasDecided = true
                     // The router names the capture too (title extraction folded
@@ -416,10 +418,48 @@ actor InboxRoutingEngine {
                     destinationPath: "Swipe File",
                     rationale: rationale
                 ))
+
+            case .fileAsResearch:
+                // A source's home is a typed filing destination (the same
+                // contract the picker commits through), with the research
+                // action — so accepting on either device is one call.
+                let entry = move.targetKey.flatMap { entriesByKey[$0] }
+                let destination: InboxFilingDestination
+                let path: String
+                switch entry?.kind {
+                case .thinkspace?:
+                    destination = .init(kind: .space, uuid: entry!.uuid, spaceID: entry!.uuid, name: entry!.name, path: entry!.name)
+                    path = "\(entry!.name) › Research"
+                case .connection?:
+                    destination = .init(kind: .connection, uuid: entry!.uuid, name: entry!.name, path: "Concepts › \(entry!.name)")
+                    path = "\(entry!.name) › References"
+                default:
+                    destination = .libraryResearch
+                    path = "Library › Research"
+                }
+                results.append(InboxRecommendation(
+                    kind: .fileAsResearch,
+                    confidence: move.confidence,
+                    suggestedAtomType: AtomType.research.rawValue,
+                    destinationPath: path,
+                    rationale: rationale,
+                    filingDestination: destination,
+                    filingAction: .research
+                ))
             }
         }
 
         return results
+    }
+
+    /// The lens the app already measured for the capture's link — platform
+    /// family, page shape, the user's past decisions for the domain — as one
+    /// line the router reads beside the capture. Nil without a link.
+    @MainActor
+    private static func linkLensHint(for text: String) -> String? {
+        guard let url = SwipeURLClassifier().firstURL(in: text) else { return nil }
+        let verdict = SwipeLensRouter.inferLens(.init(url: url, prose: text))
+        return "\(verdict.lens.displayName) — \(verdict.reason)"
     }
 
     /// The concept's future home resolved from a validated homeKey — where the

@@ -120,6 +120,14 @@ final class MindMapBuilderTests: XCTestCase {
         XCTAssertEqual(graph.root.children.count, 1)
     }
 
+    func testUserPinnedTopLevelSurvivesLegacyTitleFallback() {
+        let graph = build(connections: [
+            connection("c-1", title: "Breathing"),
+            connection("c-2", title: "Box breathing", pinned: true)
+        ])
+        XCTAssertEqual(Set(graph.root.children.map(\.id)), ["concept-c-1", "concept-c-2"])
+    }
+
     func testCycleInPersistedParentsBreaksSafely() {
         let graph = build(connections: [
             connection("c-1", title: "Alpha", parentUUID: "c-2"),

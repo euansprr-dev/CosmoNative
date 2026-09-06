@@ -5,13 +5,28 @@ import Foundation
 struct CommandKActionExecutor {
     func execute(_ intent: CommandKActionIntent) async throws {
         switch intent {
+        case .openSpaceItem(let uuid, let spaceID):
+            let presentation = try await CommandKSpaceService.openAtom(uuid, exactSpaceID: spaceID)
+            NotificationCenter.default.post(name: presentation.paletteDismissalNotification, object: nil)
+
+        case .openSpace(let spaceID, let map):
+            try await CommandKSpaceService.openSpace(spaceID, map: map)
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+
+        case .addOriginals(let uuids, let destination):
+            try await CommandKSpaceService.addOriginals(uuids, to: destination)
+
+        case .chooseSpaceDestination, .browseSpaceDestinations, .pickSpaceDestination, .backToSpaces:
+            // These change the existing palette's action rows. The view model
+            // handles them so query and composer edits remain intact.
+            break
+
         case .openAtom(let uuid):
             NotificationCenter.default.post(
                 name: CosmoNotification.NodeGraph.openAtomFromCommandK,
                 object: nil,
                 userInfo: ["atomUUID": uuid]
             )
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
 
         case .openAsPane(let uuid):
             try await openAsPane(uuid: uuid)
@@ -30,7 +45,6 @@ struct CommandKActionExecutor {
                 object: nil,
                 userInfo: ["atomUUID": uuid]
             )
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
 
         case .goToObject(let uuid):
             NotificationCenter.default.post(
@@ -38,7 +52,6 @@ struct CommandKActionExecutor {
                 object: nil,
                 userInfo: ["atomUUID": uuid]
             )
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
 
         case .deleteAtom(let uuid):
             try await AtomRepository.shared.delete(uuid: uuid)

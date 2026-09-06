@@ -180,12 +180,41 @@ struct CommandKDragOutModifier: ViewModifier {
         content.onDrag {
             let selected = selectedUUIDs()
             let uuids = (selected.contains(uuid) && selected.count > 1)
-                ? Array(selected)
+                ? selected.sorted()
                 : [uuid]
             return CommandKDragSession.shared.begin(uuids: uuids, card: cardFace)
         } preview: {
             CommandKDragPreviewLive(fallbackCard: cardFace)
         }
+    }
+}
+
+/// A result is a destination only when it is a Space or a composition. The
+/// existing drag session supplies originals; the Space writer decides whether
+/// they become membership, Group items, or authored references.
+struct CommandKSpaceDropModifier: ViewModifier {
+    let targetUUID: String?
+    let exactSpaceID: String?
+    var viewModel: CommandKViewModel
+    @State private var isTargeted = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                RoundedRectangle(cornerRadius: DS.radiusMedium)
+                    .strokeBorder(DS.accent.opacity(isTargeted ? 0.6 : 0), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .dropDestination(for: String.self) { items, _ in
+                guard let targetUUID, CommandKDragSession.shared.isActive,
+                      let payload = CommandKDragSession.shared.payload, !payload.uuids.isEmpty else { return false }
+                let ids = payload.uuids
+                CommandKDragSession.shared.end()
+                viewModel.addDroppedOriginals(ids, to: targetUUID, exactSpaceID: exactSpaceID)
+                return true
+            } isTargeted: { targeted in
+                withAnimation(ProMotionSprings.snappy) { isTargeted = targeted && targetUUID != nil }
+            }
     }
 }
 

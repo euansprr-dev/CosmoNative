@@ -648,6 +648,7 @@ struct UnifiedSearchResult: Identifiable {
     /// `matchedExcerpt`/`lexicalTier`.
     let thumbnailURL: String?
     let faviconHost: String?
+    let spaceInfo: CommandKSpaceSearchInfo?
 
     init(
         id: String,
@@ -671,7 +672,8 @@ struct UnifiedSearchResult: Identifiable {
         browserURL: URL? = nil,
         browserTitle: String? = nil,
         thumbnailURL: String? = nil,
-        faviconHost: String? = nil
+        faviconHost: String? = nil,
+        spaceInfo: CommandKSpaceSearchInfo? = nil
     ) {
         self.id = id
         self.source = source
@@ -695,6 +697,7 @@ struct UnifiedSearchResult: Identifiable {
         self.browserTitle = browserTitle
         self.thumbnailURL = thumbnailURL
         self.faviconHost = faviconHost
+        self.spaceInfo = spaceInfo
     }
 
     var selectionID: String {
@@ -1513,6 +1516,16 @@ public final class CommandKViewModel {
     /// the same reason as `isActionPanelPresented`: MainView's escape monitor
     /// and the keyboard layer need to see it.
     var composerDraft: CommandKComposerDraft?
+    /// Set by MainView at presentation, never inferred from a last-used Space.
+    var spaceContext: CommandKSpaceContext?
+    var spaceDestinationPicker: CommandKSpaceDestinationPicker?
+    var selectedSpaceAtom: Atom?
+    var selectedSpaceInfo: CommandKSpaceSearchInfo?
+    var createdCompositionUUID: String?
+    var selectionPicker: CommandKPickerSession?
+    @ObservationIgnored var selectionPickerTask: Task<Void, Never>?
+    @ObservationIgnored var spaceSelectionTask: Task<Void, Never>?
+    @ObservationIgnored var spacePickerTask: Task<Void, Never>?
 
     /// Live Ask-Cortex session shown in the detail pane. Set when an
     /// `?<question>` action executes; Escape peels it before the palette
@@ -1706,7 +1719,7 @@ public final class CommandKViewModel {
 
     /// Flat ordered list for keyboard navigation in expanded domain rail mode.
     private(set) var expandedDomainSelectionIDs: [String] = []
-    private var expandedDomainOpenTargets: [String: CommandKDomainOpenTarget] = [:]
+    var expandedDomainOpenTargets: [String: CommandKDomainOpenTarget] = [:]
 
     /// Active #type prefix filter parsed from query
     var activeTypePrefix: AtomType? = nil
@@ -1779,8 +1792,12 @@ public final class CommandKViewModel {
     func ensureComposerDraft(for action: CommandKAction) {
         if composerDraft?.actionID == action.id {
             syncComposerDraftPrefills(from: action)
-        } else if let draft = CommandKComposerDraft.draft(for: action) {
+        } else if var draft = CommandKComposerDraft.draft(for: action) {
+            if let kind = draft.kind.compositionKind {
+                draft.destination = spaceContext.flatMap { $0.supportsCreation(kind) ? $0 : $0.root }
+            }
             composerDraft = draft
+            createdCompositionUUID = nil
             isComposerFocused = false
         }
     }
@@ -1794,6 +1811,7 @@ public final class CommandKViewModel {
     }
 
     private func resetComposerState() {
+        createdCompositionUUID = nil
         composerDraft = nil
         isComposerFocused = false
         askSession = nil
@@ -1912,6 +1930,16 @@ public final class CommandKViewModel {
         flat: [UnifiedSearchResult],
         cards: [UnifiedCardItem]
     ) {
+        let grouped = grouped.compactMap { group -> (source: UnifiedSearchSource, results: [UnifiedSearchResult])? in
+            let matches = group.results.filter { result in
+                guard let picker = selectionPicker else { return true }
+                guard let uuid = result.atomUUID, let type = result.atomType,
+                      ![AtomType.thinkspace, .deepDive, .inquirySession].contains(type) else { return false }
+                return picker.includesInScope(uuid)
+            }
+            return matches.isEmpty ? nil : (group.source, matches)
+        }
+        let flat = selectionPicker == nil ? flat : grouped.flatMap(\.results)
         if isUnifiedSearchActive != active {
             isUnifiedSearchActive = active
         }
@@ -1971,20 +1999,19 @@ public final class CommandKViewModel {
     }
 
     private func unifiedResultSignature(_ results: [UnifiedSearchResult]) -> [String] {
-        results.map { result in
-            [
-                result.selectionID,
-                result.id,
-                result.source.rawValue,
-                result.resultKind.rawValue,
-                result.title,
-                result.subtitle ?? "",
-                result.snippet ?? "",
-                result.atomUUID ?? "",
-                result.thinkspaceId ?? "",
-                result.readwiseBookId.map(String.init) ?? "",
-                result.browserURL?.absoluteString ?? ""
-            ].joined(separator: "\u{1F}")
+        results.map { result -> String in
+            var fields: [String] = [result.selectionID, result.id, result.source.rawValue,
+                                    result.resultKind.rawValue, result.title]
+            fields.append(result.subtitle ?? "")
+            fields.append(result.snippet ?? "")
+            fields.append(result.atomUUID ?? "")
+            fields.append(result.thinkspaceId ?? "")
+            fields.append(result.spaceInfo?.subtitle ?? "")
+            fields.append(result.spaceInfo?.location?.spaceID ?? "")
+            let readwiseID: String = result.readwiseBookId.map { String($0) } ?? ""
+            fields.append(readwiseID)
+            fields.append(result.browserURL?.absoluteString ?? "")
+            return fields.joined(separator: "\u{1F}")
         }
     }
 
@@ -2142,6 +2169,12 @@ public final class CommandKViewModel {
 
         queryDebounceTask?.cancel()
         cancelActiveSearchWork()
+
+        if isSelectionPicker {
+            let empty = newQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if empty { transitionToExpanded(.database, loadDataImmediately: false) }
+            else { cortexMode = .searchResults }
+        }
 
         if newQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             clearVisibleSearchStateForEmptyQuery()
@@ -2363,10 +2396,10 @@ public final class CommandKViewModel {
 
         // Parse #type prefix
         let parsed = parseTypePrefix(query)
-        let searchQuery = parsed.query
-        let prefixType = parsed.typeFilter
+        let searchQuery = isSelectionPicker ? query : parsed.query
+        let prefixType = isSelectionPicker ? nil : parsed.typeFilter
 
-        let parsedAction = CommandKActionParser.parse(query)
+        let parsedAction = isSelectionPicker ? nil : CommandKActionParser.parse(query)
         setPrimaryAction(parsedAction)
         setActionStatusMessage(nil)
         setSearchFeedback(.none)
@@ -2430,7 +2463,7 @@ public final class CommandKViewModel {
             flatNavigableResults = []
         }
 
-        let matchedUserCommandRows = prefixType == nil
+        let matchedUserCommandRows = prefixType == nil && !isSelectionPicker
             ? await loadUserCommandRows(for: searchQuery)
             : []
         guard await searchPipeline.isCurrent(requestID),
@@ -3031,7 +3064,7 @@ public final class CommandKViewModel {
 
     /// Whether the current query is a "task:" creation command
     public var isTaskCreationMode: Bool {
-        query.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("task:")
+        !isSelectionPicker && query.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("task:")
     }
 
     /// Extract task name from "task: [name]" query
@@ -3074,6 +3107,7 @@ public final class CommandKViewModel {
 
     /// Open the selected result in the split-pane column.
     public func openSelectedAsPane() async {
+        guard !isSelectionPicker else { return }
         if let action = activeCommandAction,
            await openCommandActionAsPaneIfSupported(action) {
             return
@@ -3118,6 +3152,7 @@ public final class CommandKViewModel {
     /// ladder mirrors `openSelectedAsPane()`; non-atom rows (thinkspaces,
     /// browser pins, readwise, commands) are a deliberate no-op.
     public func placeSelectedOnCanvas() {
+        guard !isSelectionPicker else { return }
         guard !isTaskCreationMode else { return }
 
         if let primaryAction,
@@ -3162,20 +3197,7 @@ public final class CommandKViewModel {
     /// connection focus modes consume it for their own canvases, MainView
     /// covers every other surface.
     private func placeAtomOnCurrentCanvas(uuid: String) {
-        Task { @MainActor in
-            var userInfo: [String: Any] = ["atomUUID": uuid]
-            if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
-                userInfo["atomType"] = atom.type.rawValue
-                userInfo["title"] = atom.title ?? "Untitled"
-            }
-            try? await NodeGraphEngine.shared.recordAccess(atomUUID: uuid, type: .view)
-            NotificationCenter.default.post(
-                name: CosmoNotification.NodeGraph.addItemToCurrentCanvas,
-                object: nil,
-                userInfo: userInfo
-            )
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-        }
+        addSelectedOriginals(fallbackUUID: uuid)
     }
 
     private func openCommandActionAsPaneIfSupported(_ action: CommandKAction) async -> Bool {
@@ -3289,6 +3311,7 @@ public final class CommandKViewModel {
 
     /// Open the selected result
     public func openSelected() {
+        if isSelectionPicker { toggleCurrentPickerSelection(); return }
         if let primaryAction,
            selectedNodeId == nil || selectedNodeId == primaryAction.id {
             performPrimaryAction()
@@ -3364,12 +3387,7 @@ public final class CommandKViewModel {
                 title: result.browserTitle ?? result.subtitle ?? "Browser"
             )
         } else if result.resultKind == .thinkspace, let thinkspaceId = result.thinkspaceId {
-            NotificationCenter.default.post(
-                name: CosmoNotification.Navigation.navigateToThinkspaceById,
-                object: nil,
-                userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: thinkspaceId).userInfo
-            )
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            executeSpaceAction(.openSpace(spaceID: thinkspaceId, map: false))
         } else if let atomUUID = result.atomUUID {
             Task {
                 try? await NodeGraphEngine.shared.recordAccess(atomUUID: atomUUID, type: .view)
@@ -3395,19 +3413,20 @@ public final class CommandKViewModel {
                 }
                 return
             }
-            postAtomOpenFromCommandK(atomUUID)
+            postAtomOpenFromCommandK(atomUUID, spaceID: result.spaceInfo?.location?.spaceID)
         } else if let bookId = result.readwiseBookId {
             selectedReadwiseBookId = bookId
         }
     }
 
-    private func postAtomOpenFromCommandK(_ atomUUID: String) {
+    private func postAtomOpenFromCommandK(_ atomUUID: String, spaceID: String? = nil) {
+        var payload: [String: Any] = ["atomUUID": atomUUID]
+        if let spaceID { payload["spaceID"] = spaceID }
         NotificationCenter.default.post(
             name: CosmoNotification.NodeGraph.openAtomFromCommandK,
             object: nil,
-            userInfo: ["atomUUID": atomUUID]
+            userInfo: payload
         )
-        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
     }
 
     /// Where a research atom opens: its captured URL when it is a genuine
@@ -3440,12 +3459,7 @@ public final class CommandKViewModel {
                 }
             }
         case .thinkspace(let id):
-            NotificationCenter.default.post(
-                name: CosmoNotification.Navigation.navigateToThinkspaceById,
-                object: nil,
-                userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: id).userInfo
-            )
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+            executeSpaceAction(.openSpace(spaceID: id, map: false))
         case .readwiseBook(let id):
             selectedReadwiseBookId = id
             NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
@@ -3471,6 +3485,7 @@ public final class CommandKViewModel {
     }
 
     public func performPrimaryAction() {
+        guard !isSelectionPicker else { return }
         let action = executablePrimaryAction ?? primaryAction
         guard let action, !isExecutingAction else { return }
         performAction(action)
@@ -3478,6 +3493,18 @@ public final class CommandKViewModel {
 
     private func performAction(_ action: CommandKAction) {
         guard !isExecutingAction else { return }
+        if let kind = CommandKComposerDraft.composerKind(for: action.kind), kind.compositionKind != nil {
+            ensureComposerDraft(for: action)
+            if composerDraft?.validation.isValid == true {
+                Task { @MainActor in await commitComposerDraft() }
+            } else {
+                isComposerFocused = true
+                if let composition = kind.compositionKind, composition != .page, composerDraft?.destination == nil {
+                    showSpaceDestinationPicker(.create(composition))
+                }
+            }
+            return
+        }
         if !action.isExecutable {
             // A creation action with nothing typed yet isn't an error — Enter
             // drops you into its composer form instead.
@@ -3569,10 +3596,10 @@ public final class CommandKViewModel {
             }
             finishAction()
 
-        case .createNote:
-            let title = action.payload.title ?? action.payload.body ?? ""
-            _ = try await AgentToolExecutor.shared.execute(toolName: "create_note", arguments: ["title": title])
-            finishAction()
+        case .createNote, .createGroup, .createBook, .createCourse:
+            ensureComposerDraft(for: action)
+            guard let draft = composerDraft else { return }
+            try await commitComposer(draft)
 
         case .captureInbox:
             guard let body = action.payload.body ?? action.payload.rawText else { return }
@@ -3599,12 +3626,16 @@ public final class CommandKViewModel {
             finishAction()
 
         case .navigateLastThinkspace:
-            NotificationCenter.default.post(
-                name: .voiceNavigationRequested,
-                object: nil,
-                userInfo: ["destination": "thinkspace"]
-            )
-            finishAction()
+            if let spaceContext {
+                try await CommandKSpaceService.openSpace(spaceContext.spaceID)
+                finishAction()
+            } else { showSpaceDestinationPicker(.open) }
+
+        case .openSpaceMap:
+            if let id = action.payload.thinkspaceID ?? spaceContext?.spaceID {
+                try await CommandKSpaceService.openSpace(id, map: true)
+                finishAction()
+            } else { showSpaceDestinationPicker(.map) }
 
         case .openBrowser:
             let queryText = action.payload.queryText?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3634,24 +3665,12 @@ public final class CommandKViewModel {
 
         case .openAtom:
             guard let uuid = action.payload.atomUUID else { return }
-            Task {
-                try? await NodeGraphEngine.shared.recordAccess(atomUUID: uuid, type: .view)
-            }
-            NotificationCenter.default.post(
-                name: CosmoNotification.NodeGraph.openAtomFromCommandK,
-                object: nil,
-                userInfo: ["atomUUID": uuid]
-            )
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
-            finishAction()
+            let presentation = try await CommandKSpaceService.openAtom(uuid, preferredSpaceID: spaceContext?.spaceID)
+            NotificationCenter.default.post(name: presentation.paletteDismissalNotification, object: nil)
 
         case .openThinkspace:
-            guard let thinkspaceID = action.payload.thinkspaceID else { return }
-            NotificationCenter.default.post(
-                name: CosmoNotification.Navigation.navigateToThinkspaceById,
-                object: nil,
-                userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: thinkspaceID).userInfo
-            )
+            guard let id = action.payload.thinkspaceID else { return }
+            try await CommandKSpaceService.openSpace(id)
             finishAction()
 
         case .savedSearch:
@@ -3769,7 +3788,10 @@ public final class CommandKViewModel {
     /// detail-pane forms. One choke point per shape, reusing the same write
     /// paths as the quick colon-grammar actions.
     func commitComposerDraft() async {
-        guard let draft = composerDraft, draft.validation.isValid else { return }
+        guard !isExecutingAction, let draft = composerDraft, draft.validation.isValid else { return }
+        isExecutingAction = true
+        actionStatusMessage = nil
+        defer { isExecutingAction = false }
         do {
             try await commitComposer(draft)
             resetComposerState()
@@ -3837,7 +3859,20 @@ public final class CommandKViewModel {
             }
             finishAction()
 
-        case .createNote, .createContent:
+        case .createNote, .createGroup, .createBook, .createCourse:
+            guard let kind = draft.kind.compositionKind else { return }
+            if let createdCompositionUUID {
+                try await openCreatedComposition(createdCompositionUUID, destination: draft.destination)
+                return
+            }
+            let created = try await CommandKSpaceService.create(kind: kind, title: form.value(for: .title),
+                body: form.value(for: .body), destination: draft.destination)
+            // Remember a successful create before navigation. A temporary open
+            // failure can be retried without creating a second document.
+            createdCompositionUUID = created.uuid
+            try await openCreatedComposition(created.uuid, destination: draft.destination)
+
+        case .createContent:
             // Creating IS editing (the iOS EditorCreationFlow model): make
             // the atom, then open it — hideCommandK, never blanket-close.
             // The note's opening paragraph rides atom.body (plain text is the
@@ -4203,6 +4238,10 @@ public final class CommandKViewModel {
     public func initializeCortexMode() {
         guard isSurfaceActive else { return }
         prewarmSearchIndexIfNeeded()
+        if isSelectionPicker {
+            transitionToExpanded(.database, loadDataImmediately: false)
+            return
+        }
         if let tab = initialExpandedTab {
             transitionToExpanded(tab, loadDataImmediately: false)
         } else {
@@ -5328,11 +5367,12 @@ public final class CommandKViewModel {
         let thinkspacesByID = includeThinkspaces
             ? Dictionary(uniqueKeysWithValues: ThinkspaceManager.shared.sidebarThinkspaces.map { ($0.id, $0) })
             : [:]
-        var libraryItemsByID = await buildUnifiedAtomLibraryItems(
+        let hydratedLibrary = await buildUnifiedAtomLibraryItems(
             atomUUIDs: atomUUIDs,
             projectsByUUID: projectsByUUID,
             thinkspacesByID: thinkspacesByID
         )
+        var libraryItemsByID = hydratedLibrary.items
         guard isCurrentUnifiedSearchRequest(requestID),
               isCurrentLiveQueryGeneration(queryGeneration),
               await isCurrentSearchRequest(searchRequestID) else { return }
@@ -5341,7 +5381,8 @@ public final class CommandKViewModel {
         }
 
         let enrichedResults = combinedResults.map { result in
-            enrichUnifiedSearchResult(result, with: result.libraryLookupKey.flatMap { libraryItemsByID[$0] })
+            enrichUnifiedSearchResult(result, with: result.libraryLookupKey.flatMap { libraryItemsByID[$0] },
+                spaceInfo: result.atomUUID.flatMap { hydratedLibrary.spaces[$0] })
         }
         let regrouped = CommandKUnifiedSearchComposer.regroup(enrichedResults)
         guard isCurrentUnifiedSearchRequest(requestID),
@@ -5404,13 +5445,21 @@ public final class CommandKViewModel {
         atomUUIDs: [String],
         projectsByUUID: [String: Atom],
         thinkspacesByID: [String: Thinkspace]
-    ) async -> [String: LibraryItem] {
-        guard !atomUUIDs.isEmpty else { return [:] }
+    ) async -> (items: [String: LibraryItem], spaces: [String: CommandKSpaceSearchInfo]) {
+        guard !atomUUIDs.isEmpty else { return ([:], [:]) }
 
         let atoms = (try? await AtomRepository.shared.fetchBatch(uuids: atomUUIDs)) ?? []
         let memberships = (try? await AtomRepository.shared.fetchThinkspaceMembership(for: atomUUIDs)) ?? [:]
 
-        return atoms.reduce(into: [String: LibraryItem]()) { result, atom in
+        let locations = (try? await AtomRepository.shared.searchSpaceLocations(for: atoms.map(\.uuid))) ?? [:]
+        var spaceInfo: [String: CommandKSpaceSearchInfo] = [:]
+        for atom in atoms {
+            guard !Task.isCancelled else { return ([:], [:]) }
+            if let info = try? await CommandKSpaceService.searchInfo(for: atom, preferredSpaceID: spaceContext?.spaceID, locations: locations[atom.uuid] ?? []) {
+                spaceInfo[atom.uuid] = info
+            }
+        }
+        let items = atoms.reduce(into: [String: LibraryItem]()) { result, atom in
             guard atom.type != .project else { return }
             let atomThinkspaces = (memberships[atom.uuid] ?? []).compactMap { thinkspacesByID[$0] }
             let project = resolveProject(
@@ -5424,6 +5473,7 @@ public final class CommandKViewModel {
                 thinkspaces: atomThinkspaces
             )
         }
+        return (items, spaceInfo)
     }
 
     private func resolveProject(
@@ -5457,7 +5507,8 @@ public final class CommandKViewModel {
         return (.keywordInBody, 0.62)
     }
 
-    private func enrichUnifiedSearchResult(_ result: UnifiedSearchResult, with item: LibraryItem?) -> UnifiedSearchResult {
+    private func enrichUnifiedSearchResult(_ result: UnifiedSearchResult, with item: LibraryItem?,
+                                           spaceInfo: CommandKSpaceSearchInfo? = nil) -> UnifiedSearchResult {
         guard let item else { return result }
 
         let resultKind: UnifiedSearchResultKind
@@ -5475,7 +5526,7 @@ public final class CommandKViewModel {
             source: result.source,
             resultKind: resultKind,
             title: result.title,
-            subtitle: result.subtitle ?? item.typeName,
+            subtitle: spaceInfo?.subtitle ?? result.subtitle ?? item.typeName,
             snippet: result.snippet ?? item.preview,
             matchedExcerpt: result.matchedExcerpt,
             icon: result.icon,
@@ -5492,7 +5543,8 @@ public final class CommandKViewModel {
             browserURL: result.browserURL,
             browserTitle: result.browserTitle,
             thumbnailURL: result.thumbnailURL ?? item.thumbnailURL,
-            faviconHost: result.faviconHost ?? item.faviconHost
+            faviconHost: result.faviconHost ?? item.faviconHost,
+            spaceInfo: spaceInfo ?? result.spaceInfo
         )
     }
 
@@ -5500,6 +5552,18 @@ public final class CommandKViewModel {
 
     /// Clear search state
     public func clear() {
+        selectionPickerTask?.cancel()
+        selectionPickerTask = nil
+        if isSelectionPicker {
+            selectionPicker = nil
+            initialExpandedTab = nil
+            cortexMode = .compact
+            spaceContext = nil
+        }
+        spacePickerTask?.cancel()
+        spaceDestinationPicker = nil
+        selectedSpaceAtom = nil
+        selectedSpaceInfo = nil
         instantIndexSearchTask?.cancel()
         unifiedSearchEnrichmentTask?.cancel()
         swipeFilterTask?.cancel()

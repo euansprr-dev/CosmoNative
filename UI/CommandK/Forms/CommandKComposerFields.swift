@@ -1114,7 +1114,7 @@ struct CommandKThinkspaceComposerFields: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
             CommandKComposerHeroTitleField(
-                placeholder: "Thinkspace name",
+                placeholder: "Space name",
                 text: pane.binding(.title),
                 accent: DS.entityResearch,
                 focus: pane.focusBinding,

@@ -243,11 +243,7 @@ struct BlockTextEditorRow: View, Equatable {
     }
 
     private func handleBlockDocumentChange(_ updatedBlockDocument: RichDocument, _: String) {
-        let before = document
         let mergedDocument = applyReplacementBlocks(updatedBlockDocument.blocks)
-        if mergedDocument != before {
-            registerTypingCheckpointIfNeeded(before: before)
-        }
         onDocumentChange?(mergedDocument, mergedDocument.plainText)
     }
 
@@ -289,6 +285,11 @@ struct BlockTextEditorRow: View, Equatable {
               result.document != document else {
             return document
         }
+
+        // CosmoDocumentEditor writes its binding before onDocumentChange.
+        // Capture the pre-image at the first splice; by the callback the
+        // document already contains this edit and cannot supply an undo base.
+        registerTypingCheckpointIfNeeded(before: document)
 
         // Ledger BEFORE the write: the document write re-runs the list body
         // synchronously, and the row's == consults the ledger to recognize

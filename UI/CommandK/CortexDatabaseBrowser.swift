@@ -160,6 +160,7 @@ struct SpotlightFauxPage: View {
 
 struct SpotlightImageContent: View {
     let urlString: String
+    var contentMode: ContentMode = .fill
 
     var body: some View {
         GeometryReader { geo in
@@ -181,14 +182,14 @@ struct SpotlightImageContent: View {
         CachedAsyncImage(url: URL(string: urlString)) { phase in
             switch phase {
             case .success(let image):
-                image.resizable().aspectRatio(contentMode: .fill)
+                image.resizable().aspectRatio(contentMode: contentMode)
             case .empty:
                 ProgressView()
                     .scaleEffect(0.6)
                     .tint(DS.textMuted)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .failure:
-                SpotlightFauxPage(accentColor: DS.textMuted)
+                unavailableImage
             }
         }
     }
@@ -199,9 +200,20 @@ struct SpotlightImageContent: View {
         LocalFileThumbnail(path: urlString) { image in
             image
                 .resizable()
-                .aspectRatio(contentMode: .fill)
-                .accessibilityLabel("Image thumbnail")
+                .aspectRatio(contentMode: contentMode)
+                .accessibilityLabel(contentMode == .fit ? "Full image preview" : "Image thumbnail")
         } placeholder: {
+            unavailableImage
+        }
+    }
+
+    @ViewBuilder
+    private var unavailableImage: some View {
+        if contentMode == .fit {
+            Label("Image preview unavailable", systemImage: "photo")
+                .font(DS.caption).foregroundStyle(DS.textMuted)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
             SpotlightFauxPage(accentColor: DS.textMuted)
         }
     }
@@ -238,5 +250,4 @@ private struct SpotlightFolderContent: View {
         return "\(item.childCount) item\(item.childCount == 1 ? "" : "s")"
     }
 }
-
 

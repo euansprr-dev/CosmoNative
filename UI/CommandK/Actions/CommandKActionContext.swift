@@ -16,6 +16,30 @@ struct CommandKActionContext {
     let mode: CortexMode
     let activeInquirySessionUUID: String?
     let activeContentDraftUUID: String?
+    var spaceContext: CommandKSpaceContext? = nil
+    var selectedSpaceInfo: CommandKSpaceSearchInfo? = nil
+    var selectedUUIDs: Set<String> = []
+
+    var selectedSpaceID: String? {
+        switch subject {
+        case .recent(let item) where item.type == .thinkspace: return item.id
+        case .result(let result) where result.resultKind == .thinkspace: return result.thinkspaceId
+        case .library(let item) where item.kind == .thinkspace: return item.uuid
+        default: return selectedSpaceInfo?.location?.spaceID
+        }
+    }
+
+    var originalUUIDs: [String] {
+        guard let uuid = selectedAtomUUID else { return [] }
+        return selectedUUIDs.contains(uuid) ? selectedUUIDs.sorted() : [uuid]
+    }
+
+    var canAddOriginal: Bool {
+        guard let uuid = selectedAtomUUID, uuid != spaceContext?.spaceID else { return false }
+        if selectionKind == .thinkspace { return false }
+        if let atom = hydratedAtom, [.thinkspace, .deepDive, .inquirySession].contains(atom.type) { return false }
+        return true
+    }
 
     var selectedAtomUUID: String? {
         subject.atomUUID ?? hydratedAtom?.uuid
@@ -26,7 +50,7 @@ struct CommandKActionContext {
         case .empty:
             return .none
         case .recent(let item):
-            return .atom(item.type)
+            return item.type == .thinkspace ? .thinkspace : .atom(item.type)
         case .result(let result):
             switch result.resultKind {
             case .atom, .project:
@@ -69,5 +93,8 @@ extension CommandKActionContext: Equatable {
             && lhs.mode == rhs.mode
             && lhs.activeInquirySessionUUID == rhs.activeInquirySessionUUID
             && lhs.activeContentDraftUUID == rhs.activeContentDraftUUID
+            && lhs.spaceContext == rhs.spaceContext
+            && lhs.selectedSpaceInfo == rhs.selectedSpaceInfo
+            && lhs.selectedUUIDs == rhs.selectedUUIDs
     }
 }

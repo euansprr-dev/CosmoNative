@@ -6,9 +6,10 @@ import SwiftUI
 struct SpaceWorkspaceView: View {
     let spaceID: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.pageFocusPresentation) private var inheritedFocus
+    @Environment(\.pageFocusPaneID) private var paneID
+    @State private var localFocus = PageFocusPresentation()
     @State private var creating: SpaceCompositionKind?
-    @State private var adding = false
-    @State private var addingReference = false
     @State private var preview: SpaceCompositionExportSnapshot?
     @State private var preparingExport = false
     @State private var imageItem: Atom?
@@ -16,30 +17,48 @@ struct SpaceWorkspaceView: View {
     @State private var contentIdeaSource: Atom?
     @State private var preparingContentIdea = false
     private var store: SpaceWorkspaceStore { .shared }
+    private var focus: PageFocusPresentation { inheritedFocus ?? localFocus }
 
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 if let atom = store.selectedItem(in: spaceID) {
+                    if effectiveView(atom) == .write {
+                        UnifiedPageView(atom: atom, spaceID: spaceID,
+                            initialBlockID: store.location(spaceID).landingBlockID)
+                            .id(atom.uuid)
+                    } else {
                     header(atom, width: geometry.size.width)
-                    Divider().overlay(DS.borderSubtle)
+                        .frame(height: focus.isFocused ? 0 : nil, alignment: .top).clipped()
+                        .opacity(focus.isFocused ? 0 : 1).allowsHitTesting(!focus.isFocused).accessibilityHidden(focus.isFocused)
+                    Divider().overlay(DS.borderSubtle).opacity(focus.isFocused ? 0 : 1)
                     HStack(spacing: 0) {
                         content(atom)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                         if store.location(spaceID).sourcesVisible && geometry.size.width >= 1060 {
                             Divider().overlay(DS.borderSubtle)
-                            sources.frame(width: 300)
+                            sources.frame(width: focus.isFocused ? 0 : 300).clipped()
+                                .opacity(focus.isFocused ? 0 : 1).allowsHitTesting(!focus.isFocused).accessibilityHidden(focus.isFocused)
                                 .transition(.move(edge: .trailing).combined(with: .opacity))
                         }
                     }
                     .sheet(isPresented: Binding(get: {
-                        store.location(spaceID).sourcesVisible && geometry.size.width < 1060
-                    }, set: { if !$0 && store.location(spaceID).sourcesVisible { store.toggleSources(in: spaceID) } })) {
+                        store.location(spaceID).sourcesVisible && geometry.size.width < 1060 && !focus.isFocused
+                    }, set: { if !$0 && !focus.isFocused && store.location(spaceID).sourcesVisible { store.toggleSources(in: spaceID) } })) {
                         VStack(spacing: 0) {
                             HStack { Spacer(); Button("Done") { store.toggleSources(in: spaceID) }.keyboardShortcut(.cancelAction) }
                                 .padding(DS.space16)
                             sources
                         }.frame(width: 400, height: 600).background(DS.bg)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if focus.focusedPageUUID == atom.uuid {
+                            Button("Exit Focus", systemImage: "arrow.down.right.and.arrow.up.left") { focus.exit() }
+                                .font(DS.caption).buttonStyle(.plain).padding(DS.space12)
+                                .glassEffect(.regular.interactive(), in: .capsule).padding(DS.space12)
+                                .help("Exit Focus (Esc)")
+                        }
+                    }
                     }
                 } else {
                     ContentUnavailableView {
@@ -51,23 +70,19 @@ struct SpaceWorkspaceView: View {
                     }
                 }
             }
-            .padding(.top, SpaceChromeMetrics.contentTopInset)
+            .padding(.top, focus.isFocused ? 0 : SpaceChromeMetrics.contentTopInset)
             .background(DS.bg)
             .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: store.location(spaceID).sourcesVisible)
         }
+        .environment(\.pageFocusPresentation, focus)
+        .onKeyPress(.escape) { focus.exit() ? .handled : .ignored }
+        .onChange(of: store.location(spaceID).itemUUID) { old, _ in
+            if let old { focus.end(pageUUID: old, paneID: paneID) }
+        }
+        .onDisappear { if let id = store.location(spaceID).itemUUID { focus.end(pageUUID: id, paneID: paneID) } }
         .task(id: spaceID) { await store.load(spaceID) }
         .sheet(item: $creating) { kind in
             SpaceWorkspaceCreateSheet(spaceID: spaceID, kind: kind, parent: store.selectedItem(in: spaceID))
-        }
-        .sheet(isPresented: $adding) {
-            if let atom = store.selectedItem(in: spaceID) {
-                SpaceWorkspaceItemPicker(spaceID: spaceID, target: atom, purpose: .members)
-            }
-        }
-        .sheet(isPresented: $addingReference) {
-            if let atom = store.sourceTarget(in: spaceID) {
-                SpaceWorkspaceItemPicker(spaceID: spaceID, target: atom, purpose: .references)
-            }
         }
         .sheet(item: $preview) { SpaceExportPreviewView(snapshot: $0) }
         .sheet(item: $organizing) { action in
@@ -81,7 +96,9 @@ struct SpaceWorkspaceView: View {
         VStack(alignment: .leading, spacing: DS.space16) {
             if let snapshot = store.snapshots[spaceID] {
                 HStack(spacing: DS.space6) {
-                    Button("Canvas") { store.showRoot(.canvas, in: spaceID) }
+                    Button(spaceName) { store.showRoot(.canvas, in: spaceID) }
+                        .lineLimit(1).help("Back to \(spaceName)")
+                        .accessibilityLabel("Back to \(spaceName)")
                     ForEach(breadcrumbs(atom, snapshot: snapshot), id: \.uuid) { ancestor in
                         Image(systemName: "chevron.right").font(DS.caption2)
                         Button(ancestor.title ?? "Untitled") { store.open(ancestor, in: spaceID) }.lineLimit(1)
@@ -118,6 +135,9 @@ struct SpaceWorkspaceView: View {
     }
     private func controls(_ atom: Atom) -> some View {
         HStack(spacing: DS.space8) {
+            UnifiedPageToolbarButton(symbol: "arrow.up.left.and.arrow.down.right", label: "Focus (⌘.)") {
+                focus.toggle(pageUUID: atom.uuid, paneID: paneID)
+            }.keyboardShortcut(".", modifiers: .command)
             Button {
                 withAnimation(reduceMotion ? nil : ProMotionSprings.gentle) { store.toggleSources(in: spaceID) }
             } label: {
@@ -143,12 +163,12 @@ struct SpaceWorkspaceView: View {
             }
             Menu {
                 if atom.spaceCompositionKind == .group {
-                    Button("Add existing…", systemImage: "plus.rectangle.on.folder") { adding = true }
+                    Button("Add existing…", systemImage: "plus.rectangle.on.folder") { addExisting(to: atom) }
                     Divider()
                     SpaceCreationMenuItems { creating = $0 }
                 } else {
                     Button("New section", systemImage: "doc.badge.plus") { creating = .page }
-                    Button("Attach reference…", systemImage: "link") { addingReference = true }
+                    Button("Attach reference…", systemImage: "link", action: addReference)
                 }
                 Divider()
                 Button("Import files…", systemImage: "arrow.down.doc") {
@@ -173,42 +193,13 @@ struct SpaceWorkspaceView: View {
         case .outline:
             SpaceWorkspaceOutline(spaceID: spaceID, root: atom, create: { creating = .page })
         case .write:
-            manuscript(atom)
+            UnifiedPageView(atom: atom, spaceID: spaceID, initialBlockID: store.location(spaceID).landingBlockID)
         }
     }
     private func effectiveView(_ atom: Atom) -> SpaceCompositionView {
         let options = store.views(for: atom, in: spaceID)
         let stored = store.location(spaceID).view
         return options.contains(stored) ? stored : options.first ?? .write
-    }
-    private func manuscript(_ atom: Atom) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: DS.space48) {
-                SpacePageEditor(atom: atom, initialBlockID: store.location(spaceID).landingBlockID,
-                    minimumBodyHeight: store.views(for: atom, in: spaceID).contains(.outline) ? 44 : 220).id(atom.uuid)
-                ForEach(store.snapshots[spaceID]?.orderedSections(of: atom.uuid, includedOnly: false).filter { $0.atom.uuid != atom.uuid } ?? []) { section in
-                    VStack(alignment: .leading, spacing: DS.space16) {
-                        Divider().overlay(DS.borderSubtle)
-                        HStack(alignment: .firstTextBaseline) {
-                            SpaceWorkspaceTitle(atom: section.atom, spaceID: spaceID)
-                            Spacer(minLength: DS.space12)
-                            if section.atom.spaceComposition?.includeInExport == false {
-                                Text("Not in export").font(DS.caption).foregroundStyle(DS.textMuted)
-                            }
-                            Button { store.select(section.atom.uuid, in: spaceID); if !store.location(spaceID).sourcesVisible { store.toggleSources(in: spaceID) } } label: {
-                                Image(systemName: "link").frame(width: 32, height: 32)
-                            }.buttonStyle(.plain).help("References for this section")
-                        }.padding(.leading, BlockInteractionPolicy.gutterWidth)
-                        SpacePageEditor(atom: section.atom, minimumBodyHeight: 44)
-                    }.id(section.atom.uuid)
-                }
-            }
-            .scrollTargetLayout()
-            .frame(maxWidth: 860).padding(.horizontal, DS.space24).padding(.vertical, DS.space32)
-            .frame(maxWidth: .infinity)
-        }
-        .scrollPosition(id: Binding(get: { store.location(spaceID).selectedUUID }, set: { store.select($0, in: spaceID) }), anchor: .top)
-        .background(DS.bg)
     }
     private func empty(_ atom: Atom) -> some View {
         ContentUnavailableView {
@@ -217,13 +208,29 @@ struct SpaceWorkspaceView: View {
         } description: {
             Text(atom.spaceCompositionKind == .group ? "Add images, pages or references. Arrange them as your collection grows." : "Add a section, or switch to Write and start with a thought.")
         } actions: {
-            if atom.spaceCompositionKind == .group { Button("Add existing…") { adding = true } }
+            if atom.spaceCompositionKind == .group { Button("Add existing…") { addExisting(to: atom) } }
             Button(atom.spaceCompositionKind == .group ? "New page" : "New section") { creating = .page }
                 .tint(DS.accent)
         }
     }
     private var sources: some View {
-        SpaceWorkspaceSources(spaceID: spaceID, add: { addingReference = true }, open: open)
+        SpaceWorkspaceSources(spaceID: spaceID, add: addReference, open: open)
+    }
+    private var spaceName: String {
+        let manager = ThinkspaceManager.shared
+        return manager.thinkspaces.first(where: { $0.id == spaceID })?.identityLabel ??
+            (manager.currentThinkspace?.id == spaceID ? manager.currentThinkspace?.identityLabel : nil) ?? "Space"
+    }
+    private func addExisting(to atom: Atom) {
+        if effectiveView(atom) == .canvas {
+            SpaceCompositionCanvasStore.session(spaceID: spaceID, containerUUID: atom.uuid).presentExistingPicker()
+        } else {
+            CommandKPickerPresentation.present(spaceID: spaceID, targetUUID: atom.uuid, purpose: .addOriginals)
+        }
+    }
+    private func addReference() {
+        guard let target = store.sourceTarget(in: spaceID) else { return }
+        CommandKPickerPresentation.present(spaceID: spaceID, targetUUID: target.uuid, purpose: .attachReferences)
     }
     private func subtitle(_ atom: Atom) -> String {
         let count = store.items(in: atom, spaceID: spaceID).count
@@ -232,8 +239,7 @@ struct SpaceWorkspaceView: View {
         return atom.spaceCompositionKind?.title ?? "Page"
     }
     private func breadcrumbs(_ atom: Atom, snapshot: SpaceCompositionSnapshot) -> [Atom] {
-        let path = (store.location(spaceID).navigationPath ?? []).compactMap { snapshot.atomsByUUID[$0] }
-        return path.isEmpty ? snapshot.breadcrumbs(to: atom.uuid).filter { $0.uuid != atom.uuid } : path
+        Array(CommandKSpaceService.navigationPath(to: atom.uuid, in: snapshot).dropLast())
     }
     private func open(_ atom: Atom) {
         if atom.spaceCompositionKind != nil {

@@ -209,10 +209,11 @@ final class PaneDeckChromeTests: XCTestCase {
     // MARK: - Adoption table
 
     func testAdoptionTableMatchesMigratedSurfaces() {
-        // Mode-hosted: the migrated entity families and the browser.
-        XCTAssertTrue(PaneDeckChromeAdoption.modeHostsDeckChrome(
+        // Unified Pages use the shell's tabs above their document toolbar.
+        XCTAssertFalse(PaneDeckChromeAdoption.modeHostsDeckChrome(
             .entity(EntitySelection(id: 1, type: .note))
         ))
+        // Mode-hosted: the other migrated entity families and the browser.
         XCTAssertTrue(PaneDeckChromeAdoption.modeHostsDeckChrome(
             .entity(EntitySelection(id: 2, type: .research))
         ))

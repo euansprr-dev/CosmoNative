@@ -110,8 +110,12 @@ enum PaneDeckChromeAdoption {
     /// (swipe atoms route by `isSwipeFileAtom`) — both host the strip.
     private static func entityModeHostsDeckChrome(_ type: EntityType) -> Bool {
         switch type {
-        case .research, .connection, .idea, .content, .note, .cosmoAI, .file:
+        case .research, .connection, .idea, .content, .cosmoAI, .file:
             return true
+        case .note:
+            // The unified Page keeps its document toolbar intact; the pane
+            // shell stacks its tabs above and hides them during Page Focus.
+            return false
         default:
             // Unrouted entity kinds render the unsupported placeholder,
             // which has no chrome row — the shell row stays.

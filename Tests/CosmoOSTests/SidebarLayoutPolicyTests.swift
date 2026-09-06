@@ -199,14 +199,41 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         )
     }
 
+    func testPageFocusUsesTheEntireDocumentSlotWithoutChangingSidebarPreference() {
+        for destination: SidebarDestination in [.commandCenter, .thinkspace(id: "source-space")] {
+            XCTAssertEqual(MainSidebarContentLayoutPolicy.contentLeadingInset(
+                for: destination, isSidebarVisible: true, isSidebarHidden: false,
+                isHoverRevealed: false, isFocusModeActive: true, isPageFocused: true,
+                sidebarReservedWidth: 320), 0)
+        }
+        XCTAssertEqual(MainSidebarContentLayoutPolicy.contentLeadingInset(
+            for: .commandCenter, isSidebarVisible: true, isSidebarHidden: false,
+            isHoverRevealed: false, isFocusModeActive: false, isPageFocused: false,
+            sidebarReservedWidth: 320), 320)
+    }
+
     func testMainContentPushUsesTransformInsteadOfAnimatingLayoutPadding() throws {
         let mainView = try String(
             contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
             encoding: .utf8
         )
 
-        XCTAssertFalse(mainView.contains(".padding(.leading, contentPushOffset)"))
-        XCTAssertTrue(mainView.contains(".offset(x: contentPushOffset)"))
+        let destinations = try XCTUnwrap(mainView.slice(
+            from: "private func destinationContent(contentPushOffset: CGFloat)",
+            to: "private var isContentDestination: Bool"
+        ))
+        let transformDestinations = try XCTUnwrap(destinations.slice(
+            from: "if case .inbox = currentDestination", to: "} else if isContentDestination {"
+        ))
+        XCTAssertFalse(transformDestinations.contains(".padding(.leading, contentPushOffset)"))
+        XCTAssertEqual(transformDestinations.components(separatedBy: ".offset(x: contentPushOffset)").count - 1, 4)
+        let contentWorkspace = try XCTUnwrap(destinations.slice(
+            from: "} else if isContentDestination {", to: "/// True when the focused entity"
+        ))
+        XCTAssertTrue(contentWorkspace.contains("ContentWorkspacePage("))
+        XCTAssertTrue(contentWorkspace.contains(".padding(.leading, contentPushOffset)"),
+                      "The Content workspace reserves actual width so its adaptive columns fit beside the sidebar.")
+        XCTAssertFalse(contentWorkspace.contains(".offset(x: contentPushOffset)"))
     }
 
     func testThinkspacesSidebarHeaderMatchesContextSectionLabelTreatment() throws {
@@ -214,19 +241,21 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             contentsOf: repositoryRoot.appendingPathComponent("Canvas/UnifiedSidebar/SidebarThinkspaceSection.swift"),
             encoding: .utf8
         )
-        let sectionHeader = try XCTUnwrap(
-            thinkspaceSection.slice(
-                from: "private var sectionHeader: some View",
-                to: "// MARK: - Thinkspace List"
-            )
+        let sidebar = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Canvas/UnifiedSidebar/UnifiedSidebar.swift"), encoding: .utf8
         )
-
-        XCTAssertTrue(sectionHeader.contains("Text(\"Spaces\")"))
-        XCTAssertTrue(sectionHeader.contains(".font(.system(size: 10, weight: .semibold))"))
-        XCTAssertTrue(sectionHeader.contains(".textCase(.uppercase)"))
-        XCTAssertTrue(sectionHeader.contains(".foregroundStyle(DS.textMuted)"))
-        XCTAssertTrue(sectionHeader.contains(".padding(.horizontal, 8)"))
-        XCTAssertTrue(sectionHeader.contains(".padding(.top, 4)"))
+        XCTAssertTrue(thinkspaceSection.contains("SidebarSection(title: \"Library\", count: rootThinkspaces.count)"))
+        let section = try XCTUnwrap(sidebar.slice(from: "struct SidebarSection<Content: View>", to: "struct SidebarInlineCreateRow"))
+        let sectionHeader = try XCTUnwrap(section.slice(from: "private var header: some View", to: "/// The row a ghost row"))
+        XCTAssertTrue(sectionHeader.contains("Text(title)"))
+        XCTAssertTrue(sectionHeader.contains(".font(DS.smallCaps)"))
+        XCTAssertTrue(sectionHeader.contains(".tracking(DS.smallCapsTracking)"))
+        XCTAssertTrue(sectionHeader.contains(".foregroundStyle(DS.giltInk)"))
+        XCTAssertTrue(sectionHeader.contains(".padding(.horizontal, UnifiedSidebarMetrics.rowInset)"))
+        XCTAssertTrue(sectionHeader.contains(".frame(height: 22)"))
+        XCTAssertTrue(sectionHeader.contains(".accessibilityAddTraits(.isHeader)"))
+        XCTAssertTrue(sectionHeader.contains(".font(DS.caption.monospacedDigit())"))
+        XCTAssertTrue(sectionHeader.contains(".contentTransition(.numericText())"))
     }
 
     func testContentFocusDoesNotReintroduceLegacyTruncationPatterns() throws {
@@ -397,22 +426,30 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             encoding: .utf8
         )
 
-        XCTAssertTrue(
-            mainView.contains("if showCommandK {\n                    CommandKView("),
-            "Only the visible Command-K presentation should mount the full-window CommandKView host."
+        let commandK = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/CommandK/CommandKView.swift"), encoding: .utf8
         )
-        XCTAssertFalse(
-            mainView.contains("if showCommandK || commandKBehindFocusMode {\n                    CommandKView("),
-            "Preserving Command-K behind focus mode must not preserve a full-screen invisible host above browser panes."
-        )
-        XCTAssertTrue(
-            mainView.contains("\n            .allowsHitTesting(showCommandK)\n            .zIndex(200)"),
-            "The Command-K hit-test gate must live on the persistent wrapper outside the conditional — a gate inside the branch goes stale during the removal transition and a stranded snapshot swallows every click (dead-clicks-after-dismiss bug)."
-        )
-        XCTAssertFalse(
-            mainView.contains(".animation(.spring(response: 0.3, dampingFraction: 0.8), value: showCommandK)"),
-            "Command-K insert/removal must have a single animation driver (applyCommandKPresentation's withAnimation); a competing implicit driver can interrupt the removal transition and strand the click-catching snapshot."
-        )
+        let host = try XCTUnwrap(commandK.slice(from: "struct CommandKOverlayHost: View", to: "// MARK: - CommandKView"))
+        XCTAssertTrue(mainView.contains("CommandKOverlayHost("))
+        XCTAssertTrue(mainView.contains("isPresented: showCommandK,"))
+        XCTAssertTrue(mainView.contains("onDismissed: finishCommandKDismissal"))
+        XCTAssertTrue(host.contains("if isMounted {"))
+        XCTAssertTrue(host.contains("isActive: isPresented,"))
+        XCTAssertFalse(host.contains("commandKBehindFocusMode"))
+        XCTAssertTrue(host.contains("            }\n        }\n        // Live ancestor gates"),
+                      "Both the mounted branch and its Group must close before the live gates are applied.")
+        let liveGate = try XCTUnwrap(host.range(of: ".allowsHitTesting(isPresented)"))
+        let branchEnd = try XCTUnwrap(host.range(of: "// Live ancestor gates"))
+        XCTAssertGreaterThan(liveGate.lowerBound, branchEnd.lowerBound,
+                             "The live hit-test gate belongs to the persistent Group, outside the closing subtree.")
+        XCTAssertTrue(host.contains(".accessibilityHidden(!isPresented)"))
+        XCTAssertTrue(host.contains(".transition(.identity)"))
+        XCTAssertTrue(host.contains("completionCriteria: .removed"))
+        let completionGuard = try XCTUnwrap(host.range(of: "guard presentationRevision == revision, !isPresented else { return }"))
+        let unmount = try XCTUnwrap(host.range(of: "isMounted = false", range: completionGuard.upperBound..<host.endIndex))
+        XCTAssertLessThan(completionGuard.lowerBound, unmount.lowerBound,
+                          "A stale dismissal completion must never unmount a reopened search.")
+        XCTAssertFalse(mainView.contains(".animation(.spring(response: 0.3, dampingFraction: 0.8), value: showCommandK)"))
     }
 
     func testAsyncNavigationFetchesCancelAndIgnoreStaleResults() throws {
@@ -477,43 +514,32 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         XCTAssertTrue(mainView.contains("@State private var commandKNavigationTask: Task<Void, Never>?"))
         XCTAssertTrue(mainView.contains("@State private var commandKNavigationRequestID = UUID()"))
 
-        let openAtom = try XCTUnwrap(
-            mainView.slice(
-                from: "private func handleOpenAtomFromCommandK(atomUUID: String)",
-                to: "private func handleGoToObjectFromCommandK(atomUUID: String)"
-            )
-        )
-        XCTAssertTrue(openAtom.contains("commandKNavigationTask?.cancel()"))
-        // July 2026: the open is delegated to FocusNavigationCoordinator, which
-        // preloads the atom before presenting (no artificial delay) and owns
-        // cancellation + staleness for every focus-mode entry.
-        XCTAssertTrue(openAtom.contains("FocusNavigationCoordinator.shared.open(atomUUID: atomUUID)"))
-        XCTAssertFalse(openAtom.contains("Task.sleep"))
-        XCTAssertFalse(openAtom.contains("DispatchQueue.main.asyncAfter"))
-
-        let coordinator = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("Navigation/FocusNavigationCoordinator.swift"),
-            encoding: .utf8
-        )
-        XCTAssertTrue(coordinator.contains("openTask?.cancel()"))
-        XCTAssertTrue(coordinator.contains("guard requestID == request, !Task.isCancelled else { return }"))
-
-        let goToObject = try XCTUnwrap(
-            mainView.slice(
-                from: "private func handleGoToObjectFromCommandK(atomUUID: String)",
-                to: "private func mapAtomTypeToEntityType"
-            )
-        )
-        XCTAssertTrue(goToObject.contains("commandKNavigationTask?.cancel()"))
-        XCTAssertTrue(goToObject.contains("let requestID = UUID()"))
-        XCTAssertTrue(goToObject.contains("commandKNavigationRequestID = requestID"))
-        XCTAssertTrue(goToObject.contains("try await Task.sleep(for: .milliseconds(350))"))
-        XCTAssertTrue(goToObject.contains("guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }"))
-        XCTAssertFalse(goToObject.contains("DispatchQueue.main.asyncAfter"))
-        // June 2026: unplaced atoms open in focus mode — the inbox shows only
-        // explicit captures, never database objects.
-        XCTAssertTrue(goToObject.contains(".enterFocusMode"))
-        XCTAssertFalse(goToObject.contains("focusDatabaseItem"))
+        let routing = try XCTUnwrap(mainView.slice(
+            from: "private func handleOpenAtomFromCommandK(atomUUID: String, spaceID: String? = nil)",
+            to: "private func mapAtomTypeToEntityType"))
+        XCTAssertTrue(routing.contains("commandKNavigationTask?.cancel()"))
+        XCTAssertTrue(routing.contains("let requestID = UUID()"))
+        XCTAssertTrue(routing.contains("commandKNavigationRequestID = requestID"))
+        XCTAssertTrue(routing.contains("guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }"))
+        XCTAssertTrue(routing.contains("CommandKSpaceService.openAtom"))
+        XCTAssertTrue(routing.contains("preferredSpaceID: origin?.spaceID"))
+        XCTAssertFalse(routing.contains("Task.sleep"))
+        XCTAssertFalse(routing.contains("DispatchQueue.main.asyncAfter"))
+        let navigation = try String(contentsOf: repositoryRoot.appendingPathComponent("UI/CommandK/CommandKSpaceService.swift"), encoding: .utf8)
+        XCTAssertTrue(navigation.contains("searchSpaceLocations(for: [uuid])"))
+        XCTAssertTrue(navigation.contains("try Task.checkCancellation()\n        FocusNavigationCoordinator.shared.open(atomUUID: uuid, landingBlockID: landingBlockID)"),
+                      "A standalone Page must recheck cancellation before publishing its anchored open.")
+        let workspaceCompletion = try XCTUnwrap(navigation.slice(
+            from: "await store.load(destination)",
+            to: "if atom.spaceCompositionKind != nil {"))
+        XCTAssertTrue(workspaceCompletion.contains("try Task.checkCancellation()"),
+                      "A result cancelled during workspace loading must not replace the newer result's location or trail.")
+        XCTAssertFalse(navigation.contains("SpaceMembershipService.add"))
+        let resultStart = try XCTUnwrap(routing.slice(from: "let paletteWasVisible = showCommandK", to: "commandKNavigationTask = Task"))
+        XCTAssertTrue(resultStart.contains("commandKReturnTab = nil"))
+        XCTAssertTrue(resultStart.contains("commandKBehindFocusMode = false"))
+        let workspaceExit = try XCTUnwrap(navigation.slice(from: "private static func leaveFocusForWorkspace()", to: "static func validate"))
+        XCTAssertTrue(workspaceExit.contains("NotificationCenter.default.post(name: willOpenWorkspace, object: nil)\n        FocusNavigationCoordinator.shared.close()"))
     }
 
     func testThinkspaceDestinationSwitchesCancelBeforePublishingStaleCanvasChanges() throws {

@@ -108,6 +108,7 @@ private extension CommandKActionShortcut {
         case .commandI: return "cmd I"
         case .commandT: return "cmd T"
         case .shiftCommandP: return "shift cmd P"
+        case .optionReturn: return "option return"
         }
     }
 }

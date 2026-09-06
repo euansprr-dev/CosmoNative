@@ -8,6 +8,7 @@ extension Notification.Name {
     static var pending: [String: [String]] = [:]
     static func start(spaceID: String, sources: [String] = []) {
         pending[spaceID] = sources
+        SpaceMapPreferences.shared.select(.inquiries, in: spaceID)
         SpaceViewStore.shared.select(.deepDive, for: spaceID)
         NotificationCenter.default.post(name: .spaceStartInquiry, object: nil, userInfo: ["spaceID": spaceID])
     }
@@ -27,6 +28,9 @@ struct SpaceInquiriesView: View {
     @State private var starting = false
     @State private var showingArchived = false
     @State private var refresh = CoalescingRefresh()
+    @State private var currentSpaceID = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var mode: SpaceInquiryMode { SpaceMapPreferences.shared.mode(in: spaceID) }
 
     private var visible: [Atom] {
         sessions.filter {
@@ -41,20 +45,60 @@ struct SpaceInquiriesView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            workspaceHeader
+            if mode == .map {
+                SpaceResearchMapView(spaceID: spaceID).id(spaceID)
+            } else {
+                inquiryList
+            }
+        }
+        .background(DS.bg)
+        .task(id: spaceID) {
+            currentSpaceID = spaceID; sessions = []; questions = []; loaded = false; error = nil
+            await load(); consumeRequest()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .spaceStartInquiry)) { notification in
+            if notification.userInfo?["spaceID"] as? String == spaceID { consumeRequest() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.sessionEnded)) { _ in Task { await load() } }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.sessionCrystallized)) { _ in Task { await load() } }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Sync.atomsPulled)) { _ in Task { await load() } }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Entity.updated)) { _ in Task { await load() } }
+        .sheet(isPresented: $showingComposer) { composer }
+    }
+
+    private var workspaceHeader: some View {
+        HStack(alignment: .center, spacing: DS.space24) {
+            VStack(alignment: .leading, spacing: DS.space8) {
+                Text("Inquiries").font(DS.pageTitle).foregroundStyle(DS.text)
+                Text(mode == .map ? "See how your concepts, pages and research connect." : "Questions you’re exploring. Pick up where you left off.")
+                    .font(DS.body).foregroundStyle(DS.textSecondary)
+            }
+            Spacer()
+            Picker("Inquiry view", selection: Binding(get: { mode }, set: { next in
+                withAnimation(reduceMotion ? nil : ProMotionSprings.focusTransition) {
+                    SpaceMapPreferences.shared.select(next, in: spaceID)
+                }
+            })) {
+                Text("Inquiries").tag(SpaceInquiryMode.inquiries)
+                Text("Map").tag(SpaceInquiryMode.map)
+            }.pickerStyle(.segmented).frame(width: 200).help("Switch between inquiries and the Space map")
+            if mode == .inquiries {
+                Menu {
+                    Toggle("Archived inquiries", isOn: $showingArchived)
+                } label: { Image(systemName: "line.3.horizontal.decrease").frame(width: 44, height: 44) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).help("Filter inquiries").accessibilityLabel("Filter inquiries")
+            }
+        }
+        .padding(.horizontal, DS.space32)
+        .padding(.top, SpaceChromeMetrics.contentTopInset + DS.space24)
+        .padding(.bottom, DS.space24)
+    }
+
+    private var inquiryList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.space24) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: DS.space8) {
-                        Text("Inquiries").font(DS.pageTitle).foregroundStyle(DS.text)
-                        Text("Questions you’re exploring. Pick up where you left off.")
-                            .font(DS.body).foregroundStyle(DS.textSecondary)
-                    }
-                    Spacer()
-                    Menu {
-                        Toggle("Archived inquiries", isOn: $showingArchived)
-                    } label: { Image(systemName: "line.3.horizontal.decrease").frame(width: 44, height: 44) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).help("Filter inquiries")
-                }
                 TextField("Find a question", text: $query)
                     .textFieldStyle(.plain).font(DS.body).padding(DS.space12)
                     .background(DS.surface, in: .rect(cornerRadius: DS.radiusMedium))
@@ -97,21 +141,10 @@ struct SpaceInquiriesView: View {
             }
             .frame(maxWidth: 1000, alignment: .leading)
             .padding(.horizontal, DS.space32)
-            .padding(.top, SpaceChromeMetrics.contentTopInset + DS.space24)
             .padding(.bottom, DS.space48)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
-        .background(DS.bg)
-        .task(id: spaceID) { await load(); consumeRequest() }
-        .onReceive(NotificationCenter.default.publisher(for: .spaceStartInquiry)) { notification in
-            if notification.userInfo?["spaceID"] as? String == spaceID { consumeRequest() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.sessionEnded)) { _ in Task { await load() } }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.sessionCrystallized)) { _ in Task { await load() } }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Sync.atomsPulled)) { _ in Task { await load() } }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Entity.updated)) { _ in Task { await load() } }
-        .sheet(isPresented: $showingComposer) { composer }
     }
 
     private func inquiryRow(_ atom: Atom, isSession: Bool) -> some View {
@@ -180,9 +213,10 @@ struct SpaceInquiriesView: View {
             for session in allSessions where session.inquirySessionMetadata?.status == .crystallized {
                 if let summary = session.body { try await SpaceResearchService.saveFindings(from: session, summary: summary) }
             }
+            guard currentSpaceID == spaceID else { return }
             sessions = allSessions.sorted { $0.updatedAt > $1.updatedAt }; questions = allQuestions
             loaded = true; error = nil
-        } catch { self.error = error.localizedDescription }
+        } catch { if currentSpaceID == spaceID { self.error = error.localizedDescription } }
     }
     private func open(_ atom: Atom, isSession: Bool) async {
         guard let parent = isSession ? atom.inquirySessionMetadata?.parentDeepDiveUUID : atom.questionMetadata?.parentDeepDiveUUID else { return }

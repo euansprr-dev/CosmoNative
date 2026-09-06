@@ -20,7 +20,11 @@ struct CommandKComposerPane: View {
             VStack(alignment: .leading, spacing: DS.space16) {
                 header
                 if let draft = viewModel.composerDraft, draft.actionID == action.id {
+                    if let kind = draft.kind.compositionKind {
+                        CommandKComposerDestinationRow(viewModel: viewModel, kind: kind)
+                    }
                     fields(for: draft.kind)
+                        .disabled(viewModel.isExecutingAction || viewModel.createdCompositionUUID != nil)
                 }
                 // Keep the last rows reachable above the floating Save pill.
                 Spacer(minLength: DS.space48)
@@ -75,7 +79,7 @@ struct CommandKComposerPane: View {
         Button("Save") { commit() }
             .buttonStyle(CommandKComposerSaveButtonStyle(accent: accent))
             .keyboardShortcut(.return, modifiers: .command)
-            .disabled(viewModel.composerDraft?.validation.isValid != true)
+            .disabled(viewModel.composerDraft?.validation.isValid != true || viewModel.isExecutingAction)
             .help(saveHelp)
             .padding(.trailing, DS.space16)
             .padding(.bottom, DS.space12)
@@ -92,7 +96,9 @@ struct CommandKComposerPane: View {
         switch viewModel.composerDraft?.kind {
         case .captureInbox: return "Lands in your Inbox for triage"
         case .createNote, .createContent: return "Creates and opens the editor"
-        case .createThinkspace: return "Names a fresh canvas"
+        case .createGroup: return "Collect originals together"
+        case .createBook, .createCourse: return "Editable starter Pages"
+        case .createThinkspace: return "Collect, think, and create"
         case .captureSwipe: return "Captured to your Swipe File"
         default: return "Tab to fill · Esc back to search"
         }
@@ -128,6 +134,8 @@ struct CommandKComposerPane: View {
             CommandKSwipeComposerFields(pane: self, clients: clients)
         case .createNote:
             CommandKNoteComposerFields(pane: self)
+        case .createGroup, .createBook, .createCourse:
+            CommandKCompositionComposerFields(pane: self, kind: kind.compositionKind ?? .page)
         case .createContent:
             CommandKContentComposerFields(pane: self)
         case .createThinkspace:

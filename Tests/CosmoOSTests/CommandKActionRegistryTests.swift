@@ -77,7 +77,7 @@ final class CommandKActionRegistryTests: XCTestCase {
 
         XCTAssertEqual(ids.first, .openFocusMode)
         XCTAssertTrue(ids.contains(.openAsPane))
-        XCTAssertTrue(ids.contains(.addToCanvas))
+        XCTAssertTrue(ids.contains(.addToSpace))
         XCTAssertTrue(ids.contains(.goToObject))
         XCTAssertTrue(ids.contains(.copyCosmoLink))
     }
@@ -284,6 +284,15 @@ final class CommandKActionRegistryTests: XCTestCase {
 
         XCTAssertGreaterThan(firstFocusRequest, 0)
         XCTAssertGreaterThan(state.searchFocusRequest, firstFocusRequest)
+    }
+
+    func testWorkspaceResultsDoNotRestorePaletteButPaletteOpenedFocusCanReturn() {
+        XCTAssertFalse(CommandKFocusRestorePolicy.shouldPreservePalette(wasVisible: true, presentation: .workspace))
+        XCTAssertFalse(CommandKFocusRestorePolicy.shouldPreservePalette(wasVisible: false, presentation: .workspace))
+        XCTAssertFalse(CommandKFocusRestorePolicy.shouldPreservePalette(wasVisible: false, presentation: .focusMode))
+        XCTAssertTrue(CommandKFocusRestorePolicy.shouldPreservePalette(wasVisible: true, presentation: .focusMode))
+        XCTAssertEqual(CommandKOpenPresentation.workspace.paletteDismissalNotification, CosmoNotification.NodeGraph.closeCommandK)
+        XCTAssertEqual(CommandKOpenPresentation.focusMode.paletteDismissalNotification, CosmoNotification.NodeGraph.hideCommandK)
     }
 
     func testFocusReplacementCanDiscardCommandKReturnTab() {

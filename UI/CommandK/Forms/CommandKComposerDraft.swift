@@ -19,6 +19,7 @@ struct CommandKComposerDraft: Equatable {
     var titleEditedManually = false
     /// Resolved client UUID once the brand menu picks a profile.
     var clientUUID: String?
+    var destination: CommandKSpaceContext?
 
     // MARK: Task facets (typed — the iOS TaskComposerView contract)
 
@@ -49,7 +50,16 @@ struct CommandKComposerDraft: Equatable {
     var sparkTitle = ""
     var sparkBody = ""
 
-    var validation: CommandKFormValidation { form.validation }
+    var validation: CommandKFormValidation {
+        guard form.validation.isValid else { return form.validation }
+        if let kind = kind.compositionKind {
+            if kind != .page, destination == nil { return .init(isValid: false, message: "Choose a Space") }
+            if let destination, !destination.supportsCreation(kind) {
+                return .init(isValid: false, message: "Choose a Space or Group")
+            }
+        }
+        return form.validation
+    }
 
     /// The field the search query syncs into while typing.
     var querySyncField: CommandKFormFieldID {
@@ -74,6 +84,9 @@ struct CommandKComposerDraft: Equatable {
         case .createIdea: return .createIdea
         case .createTask: return .createTask
         case .createNote: return .createNote
+        case .createGroup: return .createGroup
+        case .createBook: return .createBook
+        case .createCourse: return .createCourse
         case .createContent: return .createContent
         case .createThinkspace: return .createThinkspace
         case .captureInbox: return .captureInbox

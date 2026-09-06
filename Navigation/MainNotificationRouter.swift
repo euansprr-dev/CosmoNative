@@ -47,8 +47,9 @@ struct MainNotificationRouter: View {
     /// MainView choreography the router can't reach through a binding.
     struct Actions {
         var presentCommandK: () -> Void
+        var presentCommandKPicker: (CommandKPickerRequest) -> Void
         var preserveCommandKBehindFocusMode: () -> Void
-        var openAtomFromCommandK: (_ atomUUID: String) -> Void
+        var openAtomFromCommandK: (_ atomUUID: String, _ spaceID: String?) -> Void
         var goToObjectFromCommandK: (_ atomUUID: String) -> Void
         var closeCommandK: () -> Void
         /// Guarded twin: closing an already-closed palette would still clear
@@ -65,7 +66,8 @@ struct MainNotificationRouter: View {
         var openCollaboratorPane: (_ atomUUID: String, _ presetId: String?) -> Void
         var openInlineAssistantPane: () -> Void
         var navigateToLastThinkspace: () -> Void
-        var fileAtomIntoThinkspace: (_ atomUUID: String, _ targetThinkspaceId: String) -> Void
+        var addCommandKOriginal: (_ atomUUID: String) -> Void
+        var fileAtomIntoThinkspace: (_ atomUUIDs: [String], _ targetThinkspaceId: String) -> Void
         var switchToThinkspace: (_ atomID: Int64) -> Void
         var openCreatorProfile: (_ creatorUUID: String) -> Void
     }
@@ -400,18 +402,23 @@ struct MainNotificationRouter: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addToCanvas)) { notification in
                 guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
-
-                actions.closeCommandK()
-
+                if appState.isCommandKVisible {
+                    actions.addCommandKOriginal(atomUUID)
+                    return
+                }
+                // Agent and Library commands outside the palette keep their
+                // established spatial placement behavior.
                 actions.navigateToLastThinkspace()
-                CanvasPendingPlacementQueue.shared.enqueue(
-                    name: .openEntityOnCanvas,
-                    userInfo: ["atomUUID": atomUUID]
-                )
+                CanvasPendingPlacementQueue.shared.enqueue(name: .openEntityOnCanvas,
+                    userInfo: ["atomUUID": atomUUID])
             }
             // Cmd+K single-click: add item to current canvas (Thinkspace fallback)
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addItemToCurrentCanvas)) { notification in
                 guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
+                if appState.isCommandKVisible {
+                    actions.addCommandKOriginal(atomUUID)
+                    return
+                }
                 // Research/Connection focus modes host their own canvases and
                 // consume this notification themselves. Every other focus mode has
                 // no canvas, so fall through to the thinkspace placement below —
@@ -439,9 +446,11 @@ struct MainNotificationRouter: View {
             // block there (or creates one) WITHOUT navigating. The user is filing,
             // not visiting.
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.moveAtomToThinkspace)) { notification in
-                guard let atomUUID = notification.userInfo?["atomUUID"] as? String,
-                      let targetThinkspaceId = notification.userInfo?["targetThinkspaceId"] as? String else { return }
-                actions.fileAtomIntoThinkspace(atomUUID, targetThinkspaceId)
+                guard let targetThinkspaceId = notification.userInfo?["targetThinkspaceId"] as? String else { return }
+                let uuids = notification.userInfo?["uuids"] as? [String]
+                    ?? (notification.userInfo?["atomUUID"] as? String).map { [$0] } ?? []
+                guard !uuids.isEmpty else { return }
+                actions.fileAtomIntoThinkspace(uuids, targetThinkspaceId)
             }
             // Switch to the selected Thinkspace from Command-K
             .onReceive(NotificationCenter.default.publisher(for: .switchToThinkspace)) { notification in
@@ -464,13 +473,17 @@ struct MainNotificationRouter: View {
 
     private var commandKReceivers: some View {
         Color.clear
+            .onReceive(NotificationCenter.default.publisher(for: CommandKPickerPresentation.notification)) { notification in
+                guard let request = notification.object as? CommandKPickerRequest else { return }
+                actions.presentCommandKPicker(request)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
                 actions.presentCommandK()
             }
             // NodeGraph Command-K atom opening handler
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.openAtomFromCommandK)) { notification in
                 guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
-                actions.openAtomFromCommandK(atomUUID)
+                actions.openAtomFromCommandK(atomUUID, notification.userInfo?["spaceID"] as? String)
             }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.goToObjectFromCommandK)) { notification in
                 guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }

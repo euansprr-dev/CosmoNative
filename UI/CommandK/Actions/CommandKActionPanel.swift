@@ -7,6 +7,7 @@ struct CommandKActionPanel: View {
     let title: String
     let groups: [(category: CommandKActionCategory, actions: [CommandKContextualAction])]
     let errorMessage: String?
+    var emptyMessage: String = "No matching actions"
     let execute: (CommandKContextualAction) -> Void
     let dismiss: () -> Void
 
@@ -76,14 +77,15 @@ struct CommandKActionPanel: View {
                         emptyState
                     } else {
                         ForEach(filteredGroups, id: \.category.rawValue) { group in
+                            if group.category == .destructive { Divider().padding(.vertical, DS.space8) }
                             CommandKSectionLabel(label: group.category.rawValue.uppercased())
                             ForEach(group.actions, id: \.uniqueActionId) { action in
                                 CommandKActionPanelRow(
                                     action: action,
-                                    isSelected: selectedAction?.id == action.id,
+                                    isSelected: selectedAction?.uniqueActionId == action.uniqueActionId,
                                     perform: { executeIfEnabled(action) }
                                 )
-                                .id(action.id.rawValue)
+                                .id(action.uniqueActionId)
                             }
                         }
                     }
@@ -93,7 +95,7 @@ struct CommandKActionPanel: View {
             }
             .scrollIndicators(.hidden)
             .onChange(of: selectedIndex) { _, _ in
-                guard let id = selectedAction?.id.rawValue else { return }
+                guard let id = selectedAction?.uniqueActionId else { return }
                 withAnimation(ProMotionSprings.snappy) {
                     proxy.scrollTo(id, anchor: .center)
                 }
@@ -136,7 +138,7 @@ struct CommandKActionPanel: View {
             Image(systemName: "line.3.horizontal.decrease.circle")
                 .font(.system(size: 22, weight: .light))
                 .foregroundStyle(DS.giltMuted)
-            Text("No matching actions")
+            Text(emptyMessage)
                 .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
         }

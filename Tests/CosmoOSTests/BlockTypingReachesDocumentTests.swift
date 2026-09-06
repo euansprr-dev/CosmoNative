@@ -159,6 +159,47 @@ final class BlockTypingReachesDocumentTests: XCTestCase {
         )
     }
 
+    /// Exercises NSTextView → CosmoDocumentEditor binding → row callback.
+    /// The callback runs after the binding has already spliced the edit, so
+    /// a checkpoint captured only in that callback misses ordinary typing.
+    func testTypingBurstUndoAndRedoThroughRealEditorRestoresWholeDocument() throws {
+        let original = RichDocument(blocks: [
+            .paragraph("Keep this paragraph"),
+            RichBlock(kind: .bulletList, inlines: [.text("An existing thought")]),
+            .table(RichTable(strings: [["Untouched", "rich table"]], hasHeaderRow: false))
+        ])
+        let (window, model, views) = mount(original)
+        defer { window.contentView = nil; window.orderOut(nil) }
+        let target = try XCTUnwrap(views.first { $0.string.contains("An existing thought") })
+        let undo = try XCTUnwrap(window.undoManager)
+        window.makeFirstResponder(target)
+        pump(0.2)
+        target.setSelectedRange(NSRange(location: (target.string as NSString).length, length: 0))
+        undo.removeAllActions()
+        for character in " made clearer" {
+            target.insertText(String(character), replacementRange: target.selectedRange())
+            pump(0.02)
+        }
+        let typingDeadline = Date().addingTimeInterval(2)
+        while model.document.blocks[1].plainInlineText != "An existing thought made clearer", Date() < typingDeadline {
+            pump(0.02)
+        }
+        let edited = model.document
+        XCTAssertEqual(edited.blocks[1].plainInlineText, "An existing thought made clearer")
+        XCTAssertFalse(target.allowsUndo, "This must exercise document undo, not NSTextView's native stack")
+        XCTAssertTrue(undo.canUndo, "Typing must register a checkpoint before the binding replaces the document")
+
+        undo.undo()
+        let undoDeadline = Date().addingTimeInterval(2)
+        while model.document != original, Date() < undoDeadline { pump(0.02) }
+        XCTAssertEqual(model.document, original, "Undo must restore text, rich blocks, and their identities")
+        XCTAssertTrue(undo.canRedo)
+        undo.redo()
+        let redoDeadline = Date().addingTimeInterval(2)
+        while model.document != edited, Date() < redoDeadline { pump(0.02) }
+        XCTAssertEqual(model.document, edited, "Redo must replay the entire typing burst")
+    }
+
     /// The same row, but the user pauses between characters (each keystroke
     /// gets its own deferred-sync window). This passed even before the fix
     /// for the first character only, so it pins the incremental case.

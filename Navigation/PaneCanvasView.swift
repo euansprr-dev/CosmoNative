@@ -148,11 +148,7 @@ struct PaneCanvasView: View {
                         onOpenFocusMode: { uuid in
                             if let block = spatialEngine.blocks.first(where: { $0.entityUuid == uuid }),
                                block.entityId > 0 {
-                                NotificationCenter.default.post(
-                                    name: .enterFocusMode,
-                                    object: nil,
-                                    userInfo: ["type": block.entityType, "id": block.entityId]
-                                )
+                                openBlock(block)
                             }
                         }
                     )
@@ -469,6 +465,19 @@ struct PaneCanvasView: View {
         return bounds
     }
 
+    private func openBlock(_ block: CanvasBlock) {
+        guard block.entityId > 0 else { return }
+        if block.entityType == .note {
+            Task { @MainActor in
+                do {
+                    try await CommandKSpaceService.openAtom(block.entityUuid, preferredSpaceID: thinkspaceId)
+                } catch { SpaceWorkspaceStore.shared.report(error, in: thinkspaceId) }
+            }
+        } else {
+            FocusNavigationCoordinator.shared.open(entity: EntitySelection(id: block.entityId, type: block.entityType))
+        }
+    }
+
     // MARK: - Blocks Layer
 
     @ViewBuilder
@@ -495,13 +504,7 @@ struct PaneCanvasView: View {
                         }
                 )
                 .onTapGesture(count: 2) {
-                    if [.idea, .content, .research, .connection, .cosmoAI].contains(block.entityType) {
-                        NotificationCenter.default.post(
-                            name: .enterFocusMode,
-                            object: nil,
-                            userInfo: ["type": block.entityType, "id": block.entityId]
-                        )
-                    }
+                    openBlock(block)
                 }
                 .onTapGesture(count: 1) {
                     selectBlock(block.id)

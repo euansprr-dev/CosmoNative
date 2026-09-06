@@ -137,6 +137,9 @@ enum CommandKDomainRailItem: Identifiable {
     var visualIdentity: CommandKVisualIdentity {
         switch self {
         case .library(let item):
+            if let kind = SpaceCompositionKind.allCases.first(where: { $0.title == item.typeName }) {
+                return CommandKVisualIdentity.composition(kind)
+            }
             let identity = item.kind == .thinkspace
                 ? CommandKVisualIdentity.atom(type: .thinkspace)
                 : CommandKVisualIdentity.atom(type: item.atomType)
@@ -524,7 +527,7 @@ struct CortexResultRail: View {
                     icon: item.type.cosmoIcon,
                     thumbnailURL: item.thumbnailURL
                 ))
-                .commandKCardContextMenu(atomUUID: item.id, entityId: item.entityId, atomType: item.type)
+                .commandKCardContextMenu(atomUUID: item.id, entityId: item.entityId, atomType: item.type, viewModel: viewModel)
             }
         }
     }
@@ -628,7 +631,15 @@ struct CortexResultRail: View {
             ForEach(groups, id: \.source) { group in
                 CommandKSectionLabel(label: group.source.displayName.uppercased(), count: group.results.count)
                 ForEach(group.results) { result in
-                    CortexRailRow(
+                    searchRow(result)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func searchRow(_ result: UnifiedSearchResult) -> some View {
+        let row = CortexRailRow(
                         title: result.title,
                         subtitle: result.subtitle ?? result.snippet ?? "",
                         accent: result.accentColor,
@@ -637,16 +648,27 @@ struct CortexResultRail: View {
                         faviconHost: Self.faviconHost(for: result),
                         previewText: result.snippet ?? result.subtitle,
                         matchedExcerptLine: excerptLine(for: result),
+                        provenance: result.spaceInfo?.subtitle,
                         isConnection: result.atomType == .connection,
                         isSelected: viewModel.selectedNodeId == result.selectionID,
                         onSelect: { select(result) },
-                        onOpen: { select(result); viewModel.openSelected() }
+                        onOpen: {
+                            select(result)
+                            if !viewModel.isSelectionPicker { viewModel.openSelected() }
+                        },
+                        pickerSelection: viewModel.selectionPicker.map { $0.selection.contains(result.selectionID) },
+                        pickerDisabled: viewModel.selectionPicker.map { !$0.canSelect(result.selectionID) } ?? false,
+                        pickerAlreadyIncluded: viewModel.selectionPicker?.includedUUIDs.contains(result.selectionID) ?? false,
+                        onTogglePickerSelection: { viewModel.togglePickerSelection(result.selectionID) }
                     )
                     .id(result.selectionID)
+        if viewModel.isSelectionPicker { row }
+        else {
+            row
                     .modifier(Self.dragOutModifier(for: result))
-                    .commandKSearchResultContextMenu(result: result)
-                }
-            }
+                    .modifier(CommandKSpaceDropModifier(targetUUID: result.atomType == .note || result.resultKind == .thinkspace ? result.selectionID : nil,
+                        exactSpaceID: result.spaceInfo?.location?.spaceID, viewModel: viewModel))
+                    .commandKSearchResultContextMenu(result: result, viewModel: viewModel)
         }
     }
 
@@ -723,11 +745,16 @@ struct CortexResultRail: View {
         if isDomainLoading && domainItems.isEmpty {
             railHint("Gathering \(tab.title.lowercased())…")
         } else if domainItems.isEmpty {
-            railHint(viewModel.query.isEmpty ? "Nothing in \(tab.title) yet." : "No \(tab.title.lowercased()) matches.")
+            if let picker = viewModel.selectionPicker {
+                railHint(picker.isLoading ? "Loading originals…" :
+                    (picker.scope == .thisSpace ? "No originals in this Space yet. Browse Entire Library to add some." : "No originals in your Library yet."))
+            } else {
+                railHint(viewModel.query.isEmpty ? "Nothing in \(tab.title) yet." : "No \(tab.title.lowercased()) matches.")
+            }
         } else if tab == .ideas {
             ideaDomainSection(domainItems)
         } else {
-            CommandKSectionLabel(label: tab.title.uppercased(), count: domainItems.count)
+            CommandKSectionLabel(label: viewModel.selectionPicker?.scope.rawValue.uppercased() ?? tab.title.uppercased(), count: domainItems.count)
             ForEach(domainItems) { item in
                 domainRow(item)
             }
@@ -799,11 +826,18 @@ struct CortexResultRail: View {
             onOpen: {
                 onSelectDomainItem(item)
                 onOpenDomainItem(item)
-            }
+            },
+            pickerSelection: viewModel.selectionPicker.map { $0.selection.contains(item.selectionID) },
+            pickerDisabled: viewModel.selectionPicker.map { !$0.canSelect(item.selectionID) } ?? false,
+            pickerAlreadyIncluded: viewModel.selectionPicker?.includedUUIDs.contains(item.selectionID) ?? false,
+            onTogglePickerSelection: { viewModel.togglePickerSelection(item.selectionID) }
         )
         .id(item.selectionID)
+        .modifier(CommandKSpaceDropModifier(targetUUID: !viewModel.isSelectionPicker && (item.atomType == .note || item.isThinkspace) ? item.selectionID : nil,
+            exactSpaceID: nil, viewModel: viewModel))
 
-        if let atomUUID = item.atomUUID, let atomType = item.atomType {
+        if viewModel.isSelectionPicker { row }
+        else if let atomUUID = item.atomUUID, let atomType = item.atomType {
             row.modifier(CommandKDragOutModifier(
                 uuid: atomUUID,
                 title: item.title,
@@ -817,6 +851,7 @@ struct CortexResultRail: View {
                     atomUUID: atomUUID,
                     entityId: item.entityId,
                     atomType: atomType,
+                    viewModel: viewModel,
                     isThinkspace: false,
                     allowsSpatialGoToObject: true
                 )
@@ -825,6 +860,7 @@ struct CortexResultRail: View {
                 atomUUID: item.selectionID,
                 entityId: item.entityId,
                 atomType: atomType,
+                viewModel: viewModel,
                 isThinkspace: true,
                 allowsSpatialGoToObject: false
             )
@@ -855,15 +891,25 @@ private struct CortexRailRow: View {
     /// present it replaces the subtitle line: a body match should show the
     /// sentence it matched, not the type name (the Omnisearch anatomy).
     var matchedExcerptLine: AttributedString? = nil
+    var provenance: String? = nil
     let isConnection: Bool
     let isSelected: Bool
     let onSelect: () -> Void
     let onOpen: () -> Void
+    var pickerSelection: Bool? = nil
+    var pickerDisabled = false
+    var pickerAlreadyIncluded = false
+    var onTogglePickerSelection: () -> Void = {}
 
     @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: DS.space12) {
+            if let pickerSelection {
+                Toggle("Select \(title)", isOn: Binding(get: { pickerSelection }, set: { _ in onTogglePickerSelection() }))
+                    .toggleStyle(.checkbox).labelsHidden().disabled(pickerDisabled)
+                    .accessibilityLabel(pickerAlreadyIncluded ? "\(title), already included" : "Select \(title)")
+            }
             thumbnailSlot
             VStack(alignment: .leading, spacing: DS.space2) {
                 Text(title)
@@ -871,13 +917,18 @@ private struct CortexRailRow: View {
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
                 if let matchedExcerptLine {
-                    Text(matchedExcerptLine)
-                        .lineLimit(1)
+                    Text(matchedExcerptLine).lineLimit(1)
+                    if let provenance {
+                        Text(provenance).font(DS.caption2).foregroundStyle(DS.textMuted).lineLimit(1)
+                    }
                 } else if !subtitle.isEmpty {
                     Text(subtitle)
                         .font(DS.caption2)
                         .foregroundStyle(DS.inkFaded)
                         .lineLimit(1)
+                }
+                if pickerAlreadyIncluded {
+                    Text("Already included").font(DS.caption2).foregroundStyle(DS.textMuted)
                 }
             }
             Spacer(minLength: 0)
@@ -892,9 +943,9 @@ private struct CortexRailRow: View {
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: pickerSelection == nil ? .combine : .contain)
         .accessibilityLabel(title)
-        .accessibilityHint("Double-tap or press return to open")
+        .accessibilityHint(pickerSelection == nil ? "Double-tap or press return to open" : "Select the row to preview. Use the checkbox or Return to select this item.")
     }
 
     /// The rail is Raycast's icon territory: real media thumbnails and

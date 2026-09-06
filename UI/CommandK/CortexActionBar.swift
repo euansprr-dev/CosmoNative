@@ -15,6 +15,8 @@ struct CortexActionBar: View {
     var body: some View {
         HStack(spacing: DS.space12) {
             Text(contextLabel)
+                .lineLimit(1)
+                .help(contextLabel)
                 .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
 
@@ -51,6 +53,7 @@ struct CortexActionBar: View {
 
     private var contextLabel: String {
         if let status = viewModel.actionStatusMessage { return status }
+        if let context = viewModel.spaceContext { return context.breadcrumb }
         if case .expandedDomain(let tab) = viewModel.cortexMode { return tab.title }
         return viewModel.query.isEmpty ? "Command K" : "Results"
     }

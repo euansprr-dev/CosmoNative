@@ -35,9 +35,10 @@ enum MainSidebarContentLayoutPolicy {
         isSidebarHidden _: Bool,
         isHoverRevealed _: Bool,
         isFocusModeActive: Bool,
+        isPageFocused: Bool = false,
         sidebarReservedWidth: CGFloat
     ) -> CGFloat {
-        guard isSidebarVisible else { return 0 }
+        guard !isPageFocused, isSidebarVisible else { return 0 }
 
         if case .thinkspace = destination, !isFocusModeActive {
             return 0
@@ -430,6 +431,7 @@ struct UnifiedSidebar: View {
     var commandCenterViewModel: CommandCenterDashboardViewModel
     var pipelineModel: PipelinePageModel
     var cornerRadius: CGFloat = UnifiedSidebarMetrics.panelCornerRadius
+    var showsDestinationContext: Bool = true
     var sidebarButtonTitle: String = "Close sidebar"
     var sidebarButtonHelp: String = "Close sidebar"
     var onClose: () -> Void = {}
@@ -472,9 +474,11 @@ struct UnifiedSidebar: View {
                     VStack(alignment: .leading, spacing: DS.space16) {
                         placeRows
                         WorkbenchStripView()
-                        sidebarBody
-                            .id(activeContext)
-                            .transition(.opacity)
+                        if showsDestinationContext {
+                            sidebarBody
+                                .id(activeContext)
+                                .transition(.opacity)
+                        }
                     }
                     .padding(.horizontal, outerPadding)
                     .padding(.top, DS.space4)
@@ -541,7 +545,7 @@ struct UnifiedSidebar: View {
     private var placeRows: some View {
         VStack(spacing: UnifiedSidebarMetrics.rowSpacing) {
             ForEach(SidebarContext.allCases, id: \.rawValue) { context in
-                let isActive = activeContext == context
+                let isActive = showsDestinationContext && activeContext == context
                 SidebarRow(
                     title: context.title,
                     mark: .icon(context.cosmoIcon),

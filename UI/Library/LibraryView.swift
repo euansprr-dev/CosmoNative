@@ -796,8 +796,8 @@ struct LibraryItem: Identifiable {
         }
         self.faviconHost = atom.type == .research ? atom.domain : nil
 
-        self.cosmoIcon = atom.cosmoIcon
-        self.typeName = atom.isSwipeFileAtom ? "Swipe" : atom.type.displayName
+        self.cosmoIcon = atom.spaceCompositionKind.map { .system($0.symbol) } ?? atom.cosmoIcon
+        self.typeName = atom.isSwipeFileAtom ? "Swipe" : (atom.spaceCompositionKind?.title ?? atom.type.displayName)
         if atom.type == .thinkspace, let hex = thinkspaceMetadata?.accentColorHex {
             self.color = Color(hex: hex)
         } else {
@@ -829,7 +829,7 @@ struct LibraryItem: Identifiable {
         } else {
             self.color = DS.accent
         }
-        self.typeName = "Thinkspace"
+        self.typeName = "Space"
         self.createdAt = thinkspace.lastOpened
         self.updatedAt = thinkspace.lastOpened
         self.relativeDate = Self.relativeDateString(from: thinkspace.lastOpened)
@@ -869,6 +869,7 @@ final class LibraryViewModel: ObservableObject {
     private var searchFilter: String = ""
     private var sortMode: LibrarySortMode = .dateAdded
     private var libraryLoaded = false
+    private var loadedIncludingAllOriginals = false
 
     /// Legacy project-owned atom UUIDs. Kept empty after project deprecation.
     private var projectOwnedAtomUUIDs: Set<String> = []
@@ -890,12 +891,13 @@ final class LibraryViewModel: ObservableObject {
         libraryLoaded = false
     }
 
-    func loadLibrary() async {
-        guard !libraryLoaded else { return }
+    func loadLibrary(includingAllOriginals: Bool = false) async {
+        guard !libraryLoaded || loadedIncludingAllOriginals != includingAllOriginals else { return }
         isLoading = true
         do {
             // Fetch all user-facing library atoms, including standalone Atom Window captures.
-            let userTypes: [AtomType] = [.idea, .note, .task, .content, .research, .connection, .image]
+            let userTypes: [AtomType] = [.idea, .note, .task, .content, .research, .connection, .image] +
+                (includingAllOriginals ? [.stickyNote, .file, .question] : [])
             let atoms = try await AtomRepository.shared.fetchAll(types: userTypes)
             if ThinkspaceManager.shared.thinkspaces.isEmpty {
                 await ThinkspaceManager.shared.loadThinkspaces()
@@ -917,7 +919,7 @@ final class LibraryViewModel: ObservableObject {
             projectChildCounts = [:]
 
             let atomItems = atoms
-                .filter { !$0.isDeleted && !$0.isSwipeFileAtom }
+                .filter { !$0.isDeleted && (includingAllOriginals || !$0.isSwipeFileAtom) }
                 .map { atom -> LibraryItem in
                     let atomThinkspaces = (memberships[atom.uuid] ?? []).compactMap { thinkspacesByID[$0] }
 
@@ -942,6 +944,7 @@ final class LibraryViewModel: ObservableObject {
             // Build smart collections
             await buildSmartCollections(atoms: atoms)
             libraryLoaded = true
+            loadedIncludingAllOriginals = includingAllOriginals
         } catch {
             print("⚠️ Library load failed: \(error)")
         }

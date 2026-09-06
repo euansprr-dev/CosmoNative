@@ -121,14 +121,17 @@ struct SpaceChromeRow: View {
         if leadingInset == 0 {
             CosmoChromeIsland {
                 Menu {
-                    ForEach([SpaceView.canvas, .library, .deepDive]) { view in
-                        Button(view.title, systemImage: view.icon) { onSelectView(view) }
+                    Section("Views") {
+                        ForEach([SpaceView.canvas, .library, .deepDive]) { view in
+                            Button(view.title, systemImage: view.icon) { onSelectView(view) }
+                        }
                     }
                     if let thinkspace, let snapshot = SpaceWorkspaceStore.shared.snapshots[thinkspace.id], !snapshot.roots.isEmpty {
-                        Divider()
-                        ForEach(snapshot.roots, id: \.uuid) { atom in
-                            Button(atom.title ?? "Untitled", systemImage: atom.spaceCompositionKind?.symbol ?? "doc.text") {
-                                SpaceWorkspaceStore.shared.open(atom, in: thinkspace.id)
+                        Section("Pages & groups") {
+                            ForEach(snapshot.roots, id: \.uuid) { atom in
+                                Button(atom.title ?? "Untitled", systemImage: atom.spaceCompositionKind?.symbol ?? "doc.text") {
+                                    SpaceWorkspaceStore.shared.open(atom, in: thinkspace.id)
+                                }
                             }
                         }
                     }

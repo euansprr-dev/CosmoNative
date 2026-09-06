@@ -20,6 +20,7 @@ struct InquiryMindMapNodeCard: View {
     var onGhostHover: ((String?) -> Void)? = nil
 
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static func size(for node: MindMapNode) -> CGSize {
         if node.isGhost { return CGSize(width: 248, height: 64) }
@@ -31,19 +32,22 @@ struct InquiryMindMapNodeCard: View {
         case .question: return CGSize(width: 232, height: 40)
         case .subQuestion: return CGSize(width: 208, height: 36)
         case .questionGroup: return CGSize(width: 170, height: 44)
+        case .page: return CGSize(width: 200, height: 60)
+        case .material: return CGSize(width: 190, height: 52)
         }
     }
 
     var body: some View {
         interactiveCard
             .onHover { hovering in
-                withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+                withAnimation(reduceMotion ? nil : ProMotionSprings.hover) { isHovered = hovering }
                 if node.isGhost { onGhostHover?(hovering ? node.proposalKey : nil) }
             }
             .overlay(alignment: .topLeading) { hoverRevealCard }
             .zIndex(isHovered ? 50 : 0)
             .help(helpText)
             .accessibilityLabel(accessibilityText)
+            .accessibilityAddTraits(node.isActive ? .isSelected : [])
     }
 
     /// Ghosts carry their own ✓/✕ buttons, so the card itself is not a
@@ -96,7 +100,7 @@ struct InquiryMindMapNodeCard: View {
                     .font(titleFont)
                     .textCase(node.isSection ? .uppercase : nil)
                     .foregroundStyle(titleColor)
-                    .lineLimit(node.isConcept || node.kind == .root ? 2 : 1)
+                    .lineLimit(node.isConcept || node.kind == .root || node.kind == .page || node.kind == .material ? 2 : 1)
                     .multilineTextAlignment(.leading)
                 if let subtitle = node.subtitle {
                     Text(subtitle)
@@ -118,8 +122,8 @@ struct InquiryMindMapNodeCard: View {
         .overlay(alignment: .trailing) { collapseControl }
         .shadow(color: .black.opacity(shadowOpacity), radius: isHovered ? 10 : 6, y: 3)
         .contentShape(shape)
-        .scaleEffect(isHovered ? 1.02 : 1)
-        .animation(ProMotionSprings.snappy, value: isHovered)
+        .scaleEffect(isHovered && !reduceMotion ? 1.02 : 1)
+        .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: isHovered)
     }
 
     /// The ghost's verdict: accept materializes the section, ✕ dismisses it
@@ -182,7 +186,7 @@ struct InquiryMindMapNodeCard: View {
                 .padding(.trailing, DS.space6)
                 .help("Show the \(node.collapsedCount) hidden")
                 .accessibilityLabel("Expand \(node.title), \(node.collapsedCount) hidden")
-            } else if isHovered, node.isConcept, !node.children.isEmpty {
+            } else if isHovered, !node.children.isEmpty {
                 Button {
                     onToggleCollapse(node)
                 } label: {
@@ -234,6 +238,9 @@ struct InquiryMindMapNodeCard: View {
                     .accessibilityHidden(true)
             case .root, .childConcept:
                 EmptyView()
+            case .page, .material:
+                Image(systemName: node.kind == .page ? "doc.text" : "link")
+                    .font(DS.caption).foregroundStyle(DS.textMuted).accessibilityHidden(true)
             }
         }
     }
@@ -246,6 +253,8 @@ struct InquiryMindMapNodeCard: View {
         case .childConcept, .seedling: return .system(.callout, design: .serif)
         case .question, .subQuestion: return CosmoTypography.labelSmall
         case .questionGroup: return CosmoTypography.label
+        case .page: return DS.headline
+        case .material: return DS.callout
         }
     }
 
@@ -282,6 +291,8 @@ struct InquiryMindMapNodeCard: View {
         case .seedling: return node.isRipe ? branchColor.opacity(0.10) : DS.surface.opacity(0.6)
         case .question, .subQuestion: return node.isActive ? branchColor.opacity(0.10) : DS.surface
         case .questionGroup: return DS.surface.opacity(0.6)
+        case .page: return DS.surfaceElevated
+        case .material: return DS.surface
         }
     }
 
@@ -313,7 +324,7 @@ struct InquiryMindMapNodeCard: View {
         case .root: return DS.sepiaBorder
         case .coreConcept: return branchColor.opacity(0.45)
         case .childConcept: return branchColor.opacity(0.3)
-        case .seedling, .question, .subQuestion: return DS.borderSubtle
+        case .seedling, .question, .subQuestion, .page, .material: return DS.borderSubtle
         case .questionGroup: return DS.borderSubtle
         }
     }
@@ -338,6 +349,8 @@ struct InquiryMindMapNodeCard: View {
         case .seedling: return "Seedling \(node.title)\(node.isRipe ? ", ripe for development" : "")"
         case .question, .subQuestion: return "Open question \(node.title)"
         case .questionGroup: return "\(node.title)"
+        case .page: return "Open page \(node.title)"
+        case .material: return "Open \(node.title)"
         }
     }
 }

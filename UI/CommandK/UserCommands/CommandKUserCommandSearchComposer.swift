@@ -58,7 +58,7 @@ struct CommandKUserCommandSearchComposer {
             return CommandKAction(
                 kind: .openThinkspace,
                 title: quicklink.title,
-                subtitle: "Open Thinkspace",
+                subtitle: "Open Space",
                 icon: "rectangle.3.group.fill",
                 payload: CommandKActionPayload(thinkspaceID: id, quicklinkID: quicklink.id, rawText: quicklink.alias)
             )
@@ -224,7 +224,22 @@ struct CommandKSystemCommandComposer {
         ),
     ]
 
-    private static let commands: [SystemCommand] = creationCommands + [
+    private static let compositionCommands: [SystemCommand] = [
+        SystemCommand(id: "system-new-group", title: "New Group", subtitle: "Collect originals in a Space",
+            category: "Create", kind: .createGroup, icon: "square.stack.3d.up",
+            payload: CommandKActionPayload(rawText: "new group"), aliases: ["new", "create", "group", "new group", "create group"], priority: 99),
+        SystemCommand(id: "system-new-book", title: "New Book", subtitle: "Start with editable Pages and chapters",
+            category: "Create", kind: .createBook, icon: "book.closed",
+            payload: CommandKActionPayload(rawText: "new book"), aliases: ["new", "create", "book", "new book", "create book"], priority: 98),
+        SystemCommand(id: "system-new-course", title: "New Course", subtitle: "Start with editable modules and lessons",
+            category: "Create", kind: .createCourse, icon: "play.rectangle.on.rectangle",
+            payload: CommandKActionPayload(rawText: "new course"), aliases: ["new", "create", "course", "new course", "create course"], priority: 97),
+        SystemCommand(id: "system-space-map", title: "Open Space map", subtitle: "Explore concepts and their connections",
+            category: "Navigation", kind: .openSpaceMap, icon: "point.3.connected.trianglepath.dotted",
+            payload: CommandKActionPayload(rawText: "space map"), aliases: ["map", "space map", "open map", "open space map"], priority: 22)
+    ]
+
+    private static let commands: [SystemCommand] = creationCommands + compositionCommands + [
         SystemCommand(
             id: "system-open-browser",
             title: "Open Browser",
@@ -249,8 +264,8 @@ struct CommandKSystemCommandComposer {
         ),
         SystemCommand(
             id: "system-last-thinkspace",
-            title: "Go to Thinkspace",
-            subtitle: "Open the last-used canvas",
+            title: "Open Space",
+            subtitle: "Open this Space or choose a destination",
             category: "Navigation",
             kind: .navigateLastThinkspace,
             icon: "rectangle.3.group.fill",

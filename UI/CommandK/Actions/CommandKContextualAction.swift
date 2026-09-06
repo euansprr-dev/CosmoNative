@@ -4,6 +4,12 @@ enum CommandKContextualActionID: String, Codable, Hashable, CaseIterable {
     case openFocusMode
     case openAsPane
     case addToCanvas
+    case addToSpace
+    case addToComposition
+    case openSpaceMap
+    case chooseSpaceDestination
+    case browseSpaceDestinations
+    case backToSpaces
     case goToObject
     case deleteObject
     case copyCosmoLink
@@ -72,6 +78,7 @@ enum CommandKActionShortcut: String, Codable, Equatable {
     case commandI
     case commandT
     case shiftCommandP
+    case optionReturn
 }
 
 enum CommandKActionRole: String, Codable, Equatable {
@@ -81,6 +88,13 @@ enum CommandKActionRole: String, Codable, Equatable {
 
 enum CommandKActionIntent: Equatable {
     case openAtom(uuid: String)
+    case openSpaceItem(uuid: String, spaceID: String)
+    case openSpace(spaceID: String, map: Bool)
+    case addOriginals(uuids: [String], destination: CommandKSpaceContext)
+    case chooseSpaceDestination(CommandKSpaceContext?)
+    case browseSpaceDestinations(CommandKSpaceContext)
+    case pickSpaceDestination(uuids: [String])
+    case backToSpaces
     case openAsPane(uuid: String)
     case openSwipeGalleryAsPane
     case addToCanvas(uuid: String)

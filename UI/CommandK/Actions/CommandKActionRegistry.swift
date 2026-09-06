@@ -5,10 +5,50 @@ struct CommandKActionRegistry {
     func actions(for context: CommandKActionContext) -> [CommandKContextualAction] {
         var actions: [CommandKContextualAction] = []
         actions.append(contentsOf: universalActions(for: context))
+        actions.append(contentsOf: spaceActions(for: context))
         actions.append(contentsOf: swipeActions(for: context))
         actions.append(contentsOf: inquiryActions(for: context))
         actions.append(contentsOf: commandCenterActions(for: context))
         actions.append(contentsOf: workspaceActions(for: context))
+        return Self.orderedActions(actions)
+    }
+
+    /// Stable partition shared by the keyboard panel and native context menus.
+    /// Domain actions may append in any order; destructive actions always trail.
+    static func orderedActions(_ actions: [CommandKContextualAction]) -> [CommandKContextualAction] {
+        actions.filter { $0.role != .destructive && $0.id != .deleteObject }
+            + actions.filter { $0.role == .destructive && $0.id != .deleteObject }
+            + actions.filter { $0.id == .deleteObject }
+    }
+
+    private func spaceActions(for context: CommandKActionContext) -> [CommandKContextualAction] {
+        var actions: [CommandKContextualAction] = []
+        if context.selectionKind == .thinkspace, let id = context.selectedSpaceID {
+            actions.append(.init(id: .openFocusMode, category: .primary, title: "Open Space", subtitle: nil,
+                systemImage: "folder", shortcut: .returnKey, role: .normal, availability: .enabled,
+                intent: .openSpace(spaceID: id, map: false)))
+            actions.append(.init(id: .openAsPane, category: .object, title: "Open as Pane", subtitle: nil,
+                systemImage: "rectangle.split.2x1", shortcut: .commandReturn, role: .normal, availability: .enabled,
+                intent: .postNotification(name: CosmoNotification.Navigation.openAsPane, userInfo: ["thinkspaceId": id])))
+        }
+        if let id = context.selectedSpaceID ?? context.spaceContext?.spaceID {
+            actions.append(.init(id: .openSpaceMap, category: .workspace, title: "Open Space map",
+                subtitle: context.selectedSpaceInfo?.location?.spaceTitle ?? context.spaceContext?.spaceTitle,
+                systemImage: "point.3.connected.trianglepath.dotted", shortcut: nil, role: .normal,
+                availability: .enabled, intent: .openSpace(spaceID: id, map: true)))
+        }
+        guard context.canAddOriginal else { return actions }
+        if let destination = context.spaceContext {
+            let isSelf = context.originalUUIDs.contains(destination.containerUUID ?? destination.spaceID)
+            actions.append(.init(id: .addToComposition, category: .object, title: destination.addTitle,
+                subtitle: destination.addExplanation, systemImage: destination.containerKind?.isAuthored == true ? "link.badge.plus" : "plus.rectangle.on.rectangle",
+                shortcut: .optionReturn, role: .normal,
+                availability: isSelf ? .disabled(reason: "An item cannot contain itself") : .enabled,
+                intent: .addOriginals(uuids: context.originalUUIDs, destination: destination)))
+        }
+        actions.append(.init(id: .addToSpace, category: .object, title: "Add to Space…",
+            subtitle: "Choose a Space, Group, or Page", systemImage: "folder.badge.plus", shortcut: context.spaceContext == nil ? .optionReturn : nil,
+            role: .normal, availability: .enabled, intent: .pickSpaceDestination(uuids: context.originalUUIDs)))
         return actions
     }
 
@@ -36,12 +76,13 @@ struct CommandKActionRegistry {
             ))
         }
 
-        for place in ThinkspaceManager.shared.currentPlaces.prefix(9) {
+        for place in (context.spaceContext?.containerUUID == nil && context.spaceContext?.spaceID == ThinkspaceManager.shared.currentThinkspace?.id
+            ? ThinkspaceManager.shared.currentPlaces : []).prefix(9) {
             actions.append(CommandKContextualAction(
                 id: .jumpToPlace,
                 category: .workspace,
                 title: place.name,
-                subtitle: "Place in this thinkspace",
+                subtitle: "Place in this Space",
                 systemImage: "mappin.and.ellipse",
                 shortcut: nil,
                 role: .normal,
@@ -59,25 +100,28 @@ struct CommandKActionRegistry {
 
     func groupedActions(for context: CommandKActionContext) -> [(category: CommandKActionCategory, actions: [CommandKContextualAction])] {
         let allActions = actions(for: context)
-        return CommandKActionCategory.allCases.compactMap { category in
-            let section = allActions.filter { $0.category == category }
+        var groups: [(category: CommandKActionCategory, actions: [CommandKContextualAction])] = CommandKActionCategory.allCases.compactMap { category in
+            let section = allActions.filter { $0.category == category && $0.role != .destructive && $0.id != .deleteObject }
             return section.isEmpty ? nil : (category, section)
         }
+        let destructive = allActions.filter { $0.role == .destructive || $0.id == .deleteObject }
+        if !destructive.isEmpty { groups.append((.destructive, destructive)) }
+        return groups
     }
 
     private func universalActions(for context: CommandKActionContext) -> [CommandKContextualAction] {
-        guard let uuid = context.selectedAtomUUID else { return [] }
+        guard let uuid = context.selectedAtomUUID, context.selectionKind != .thinkspace else { return [] }
         return [
             CommandKContextualAction(
                 id: .openFocusMode,
                 category: .primary,
-                title: "Open in Focus Mode",
+                title: context.selectedSpaceID == nil ? "Open" : "Open in Space",
                 subtitle: nil,
                 systemImage: "arrow.up.left.and.arrow.down.right",
                 shortcut: .returnKey,
                 role: .normal,
                 availability: .enabled,
-                intent: .openAtom(uuid: uuid)
+                intent: context.selectedSpaceID.map { .openSpaceItem(uuid: uuid, spaceID: $0) } ?? .openAtom(uuid: uuid)
             ),
             CommandKContextualAction(
                 id: .openAsPane,
@@ -105,20 +149,9 @@ struct CommandKActionRegistry {
                 )
             ),
             CommandKContextualAction(
-                id: .addToCanvas,
-                category: .object,
-                title: "Add to Canvas",
-                subtitle: nil,
-                systemImage: "plus.rectangle.on.rectangle",
-                shortcut: nil,
-                role: .normal,
-                availability: .enabled,
-                intent: .addToCanvas(uuid: uuid)
-            ),
-            CommandKContextualAction(
                 id: .goToObject,
                 category: .object,
-                title: "Go to Object",
+                title: "Go to containing Space",
                 subtitle: nil,
                 systemImage: "scope",
                 shortcut: nil,

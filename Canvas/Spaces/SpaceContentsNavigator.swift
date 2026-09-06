@@ -14,22 +14,49 @@ struct SpaceContentsNavigator: View {
         VStack(alignment: .leading, spacing: DS.space16) {
             SidebarRow(title: "All spaces", mark: .symbol("chevron.left"), prominence: .ghost,
                        help: "Browse all spaces", action: onBack)
-            SidebarSection(title: name) {
+            Text(name)
+                .font(DS.headline).foregroundStyle(DS.text).lineLimit(2)
+                .padding(.horizontal, UnifiedSidebarMetrics.rowInset)
+                .accessibilityAddTraits(.isHeader)
+            SidebarSection(title: "Views") {
                 destination(.canvas)
+                destination(.library)
+                destination(.deepDive)
+            }
+            SidebarSection(title: "Pages & groups", count: store.snapshots[spaceID]?.roots.count) {
                 ForEach(rows) { row in
                     SpaceContentsRow(atom: row.atom, depth: row.depth, expanded: expanded.contains(row.atom.uuid),
                                      hasChildren: !children(row.atom).isEmpty,
                                      selected: store.location(spaceID).itemUUID == row.atom.uuid,
                                      toggle: { if !expanded.insert(row.atom.uuid).inserted { expanded.remove(row.atom.uuid) } },
-                                     open: { store.open(row.atom, in: spaceID) })
+                                     open: { store.open(row.atom, in: spaceID) },
+                                     revealOnCanvas: { revealOnCanvas(row.atom) })
+                }
+                if let snapshot = store.snapshots[spaceID], snapshot.roots.isEmpty {
+                    Text("Create a page or group to give this Space structure.")
+                        .font(DS.caption).foregroundStyle(DS.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, UnifiedSidebarMetrics.rowInset)
+                        .padding(.vertical, DS.space8)
                 }
                 Menu {
                     SpaceCreationMenuItems { creating = $0 }
-                } label: { Label("Add to Space", systemImage: "plus").font(DS.callout).foregroundStyle(DS.textSecondary) }
+                } label: {
+                    HStack(spacing: DS.space8) {
+                        Image(systemName: "plus").frame(width: UnifiedSidebarMetrics.glyphWidth)
+                        Text("New page or group")
+                        Spacer(minLength: 0)
+                    }.font(DS.callout).foregroundStyle(DS.textMuted)
+                        .padding(.horizontal, UnifiedSidebarMetrics.rowInset)
+                }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(minHeight: 36)
-                    .padding(.horizontal, DS.space8).help("Create a page, group, book or course")
+                    .help("Create a page, group, book or course")
+                Text("Images, stickies and other items are in Materials.")
+                    .font(DS.caption).foregroundStyle(DS.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, UnifiedSidebarMetrics.rowInset)
+                    .padding(.top, DS.space8)
             }
-            SidebarSection(title: "Explore") { destination(.library); destination(.deepDive) }
             if let error = store.errors[spaceID] {
                 VStack(alignment: .leading, spacing: DS.space8) {
                     Text(error).font(DS.caption).foregroundStyle(DS.textSecondary)
@@ -44,7 +71,10 @@ struct SpaceContentsNavigator: View {
     private func destination(_ view: SpaceView) -> some View {
         SidebarRow(title: view.title, mark: .symbol(view.icon),
                    isActive: !store.isPresenting(in: spaceID) && SpaceViewStore.shared.activeView(for: spaceID) == view,
-                   help: "Open \(view.title.lowercased())") { store.showRoot(view, in: spaceID) }
+                   help: view == .library ? "Browse all items, including images and sticky notes" :
+                        view == .deepDive ? "Explore inquiries, sources and their research map" : "Arrange this Space visually") {
+            store.showRoot(view, in: spaceID)
+        }
     }
     private func children(_ atom: Atom) -> [Atom] {
         store.items(in: atom, spaceID: spaceID).filter { $0.spaceCompositionKind != nil }
@@ -65,7 +95,13 @@ struct SpaceContentsNavigator: View {
     }
     private func revealSelection() {
         guard let id = store.location(spaceID).itemUUID, let snapshot = store.snapshots[spaceID] else { return }
-        expanded.formUnion(snapshot.breadcrumbs(to: id).map(\.uuid))
+        expanded.formUnion(CommandKSpaceService.navigationPath(to: id, in: snapshot).map(\.uuid))
+    }
+    private func revealOnCanvas(_ atom: Atom) {
+        Task {
+            do { try await SpaceWorkspaceCanvasNavigation.reveal(atomUUID: atom.uuid, in: spaceID) }
+            catch { store.report(error, in: spaceID) }
+        }
     }
 }
 
@@ -79,28 +115,43 @@ private struct SpaceContentsRow: View {
     let selected: Bool
     let toggle: () -> Void
     let open: () -> Void
+    let revealOnCanvas: () -> Void
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        HStack(spacing: DS.space4) {
-            Button(action: toggle) {
-                Image(systemName: "chevron.right").rotationEffect(.degrees(expanded ? 90 : 0))
-                    .font(DS.caption2).foregroundStyle(DS.textMuted).frame(width: 18, height: 30)
-                    .opacity(hasChildren ? 1 : 0)
-            }.buttonStyle(.plain).disabled(!hasChildren).help(expanded ? "Collapse" : "Expand")
+        HStack(spacing: 0) {
             Button(action: open) {
                 HStack(spacing: DS.space8) {
-                    Image(systemName: atom.spaceCompositionKind?.symbol ?? "doc.text").frame(width: 18)
+                    Image(systemName: atom.spaceCompositionKind?.symbol ?? "doc.text")
+                        .font(DS.title3)
+                        .frame(width: UnifiedSidebarMetrics.glyphWidth, height: UnifiedSidebarMetrics.glyphWidth)
+                        .foregroundStyle(selected ? DS.accent : DS.textSecondary)
+                        .accessibilityHidden(true)
                     Text(atom.title ?? "Untitled").lineLimit(1)
                     Spacer(minLength: 0)
-                }.font(DS.callout).foregroundStyle(selected ? DS.accent : DS.textSecondary)
-                    .frame(minHeight: 32).contentShape(.rect)
+                }.font(DS.callout.weight(.medium)).foregroundStyle(selected ? DS.text : DS.textSecondary)
+                    .padding(.horizontal, UnifiedSidebarMetrics.rowInset)
+                    .frame(minHeight: UnifiedSidebarMetrics.rowHeight).contentShape(.rect)
             }.buttonStyle(.plain).help("Open \(atom.title ?? "page")")
+            if hasChildren {
+                Button(action: toggle) {
+                    Image(systemName: "chevron.right").rotationEffect(.degrees(expanded ? 90 : 0))
+                        .font(DS.caption2).foregroundStyle(DS.textMuted)
+                        .frame(width: UnifiedSidebarMetrics.controlSize, height: UnifiedSidebarMetrics.rowHeight)
+                        .contentShape(.rect)
+                }.buttonStyle(.plain)
+                    .help(expanded ? "Collapse children" : "Expand children")
+                    .accessibilityLabel("\(expanded ? "Collapse" : "Expand") \(atom.title ?? "item")")
+            }
         }
-        .padding(.leading, CGFloat(min(depth, 6)) * DS.space12)
-        .padding(.trailing, DS.space8)
-        .background(selected ? DS.accentSoft : hovered ? DS.glassSectionFill : .clear, in: .rect(cornerRadius: 8))
+        .padding(.leading, CGFloat(min(depth, 6)) * UnifiedSidebarMetrics.nestIndent)
+        .sidebarRowChrome(isActive: selected, isHovered: hovered)
+        .contextMenu {
+            Button("Open", systemImage: atom.spaceCompositionKind?.symbol ?? "doc.text", action: open)
+            Button("Show on Space canvas", systemImage: "square.on.square", action: revealOnCanvas)
+        }
         .onHover { hovered = $0 }
+        .animation(reduceMotion ? nil : ProMotionSprings.hover, value: hovered)
         .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: selected)
         .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: expanded)
         .accessibilityElement(children: .contain).accessibilityAddTraits(selected ? .isSelected : [])
@@ -125,10 +176,12 @@ struct SpaceWorkspaceCreateSheet: View {
     let spaceID: String
     let kind: SpaceCompositionKind
     var parent: Atom? = nil
+    var placingNear: CGPoint? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var error: String?
     @State private var saving = false
+    @State private var capturedPlacement: CGPoint?
     @FocusState private var focused: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space20) {
@@ -148,7 +201,13 @@ struct SpaceWorkspaceCreateSheet: View {
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || saving)
             }
         }.padding(DS.space32).frame(width: 440).background(DS.bg)
-            .onAppear { focused = true }.interactiveDismissDisabled(saving)
+            .onAppear {
+                focused = true
+                if parent == nil {
+                    capturedPlacement = placingNear ?? (SpaceViewStore.shared.activeView(for: spaceID) == .canvas &&
+                        !SpaceWorkspaceStore.shared.isPresenting(in: spaceID) ? SpaceWorkspaceCanvasNavigation.shared.origin(in: spaceID) : nil)
+                }
+            }.interactiveDismissDisabled(saving)
     }
     private func create() {
         guard !saving, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -159,17 +218,13 @@ struct SpaceWorkspaceCreateSheet: View {
                 let atom: Atom
                 if kind == .book || kind == .course || kind == .guide {
                     atom = try await SpaceCompositionService.createStarter(kind, title: title, in: spaceID,
-                        groupUUID: parent?.spaceCompositionKind == .group ? parent?.uuid : nil)
+                        groupUUID: parent?.spaceCompositionKind == .group ? parent?.uuid : nil, placingNear: capturedPlacement)
                 } else {
                     atom = try await SpaceCompositionService.create(kind: kind, title: title, in: spaceID,
                         parentUUID: parent?.spaceCompositionKind?.isAuthored == true && kind.isAuthored ? parent?.uuid : nil,
-                        groupUUID: parent?.spaceCompositionKind == .group ? parent?.uuid : nil)
+                        groupUUID: parent?.spaceCompositionKind == .group ? parent?.uuid : nil, placingNear: capturedPlacement)
                 }
                 await SpaceWorkspaceStore.shared.load(spaceID)
-                if parent == nil && SpaceViewStore.shared.activeView(for: spaceID) == .canvas && !SpaceWorkspaceStore.shared.isPresenting(in: spaceID) {
-                    NotificationCenter.default.post(name: Notification.Name("com.cosmo.space.placeCreatedItem"), object: nil,
-                        userInfo: ["spaceID": spaceID, "atomUUID": atom.uuid])
-                }
                 SpaceWorkspaceStore.shared.open(atom, in: spaceID)
                 dismiss()
             } catch { self.error = error.localizedDescription }

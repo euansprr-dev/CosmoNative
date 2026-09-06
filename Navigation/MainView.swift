@@ -56,6 +56,10 @@ struct CommandKPresentationState: Equatable {
 }
 
 enum CommandKFocusRestorePolicy {
+    static func shouldPreservePalette(wasVisible: Bool, presentation: CommandKOpenPresentation) -> Bool {
+        wasVisible && presentation == .focusMode
+    }
+
     static func returnTab(
         _ currentReturnTab: CommandKTab?,
         restoreOnFocusClose: Bool
@@ -145,6 +149,8 @@ struct MainView: View {
     @State private var commandKSearchFocusRequest = 0
     @State private var commandKViewModel = CommandKViewModel()
     @State private var clearCommandKAfterDismissal = false
+    @State private var pickerPreviousResponder: NSResponder?
+    @State private var pickerPreviousWindow: NSWindow?
 
     // Block context menu (right-click on block).
     // Plain @State reference, NOT @StateObject: MainView reads only the
@@ -205,6 +211,7 @@ struct MainView: View {
     // @Observable — plain @State reference; MainView invalidates only on the
     // properties it reads (panes), never on divider-drag ratio writes.
     @State private var paneManager = PaneManager()
+    @State private var pageFocusPresentation = PageFocusPresentation()
 
     // Deep work session engine: referenced in event handlers only — MainView
     // must NOT observe it (its elapsedSeconds publishes every second during a
@@ -288,8 +295,11 @@ struct MainView: View {
 
             CompanionAssistantDock(
                 panes: paneManager,
-                isSuppressed: showSettings || showCommandK || appState.focusedEntity?.type == .deepDive || appState.focusedEntity?.type == .inquirySession
+                isSuppressed: pageFocusPresentation.isFocused || showSettings || showCommandK || appState.focusedEntity?.type == .deepDive || appState.focusedEntity?.type == .inquirySession
             )
+            .opacity(pageFocusPresentation.isFocused ? 0 : 1)
+            .allowsHitTesting(!pageFocusPresentation.isFocused)
+            .accessibilityHidden(pageFocusPresentation.isFocused)
             .zIndex(45)
 
             // Focus mode is now rendered inside SplitPaneContainer above (z-index 195 when active)
@@ -485,6 +495,7 @@ struct MainView: View {
                     .zIndex(300)
             }
         }
+        .environment(\.pageFocusPresentation, pageFocusPresentation)
         // Global keyboard shortcuts handled via NSEvent monitor (doesn't steal focus from text fields)
         // Command-K animates locally in its host; presentation never sends a
         // window-wide animation transaction through the workspace or results.
@@ -552,7 +563,14 @@ struct MainView: View {
             }
             closeCommandKIfOpen()
         }
+        .onReceive(NotificationCenter.default.publisher(for: CommandKSpaceService.willOpenWorkspace)) { _ in
+            // A result replaces the previous route; closing its old document
+            // must not resurrect that document's search palette.
+            commandKReturnTab = nil
+            commandKBehindFocusMode = false
+        }
         .onChange(of: appState.focusedEntity) { _, newValue in
+            pageFocusPresentation.exit()
             if let newValue {
                 recordTrailArrival(forFocus: newValue)
             } else {
@@ -577,7 +595,10 @@ struct MainView: View {
                 commandKReturnTab = nil
             } else if newValue == nil, commandKReturnTab != nil {
                 // Legacy fallback: CMD+K was destroyed but tab was tracked
+                let navigationRequestID = commandKNavigationRequestID
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    guard commandKNavigationRequestID == navigationRequestID,
+                          commandKReturnTab != nil, appState.focusedEntity == nil else { return }
                     presentCommandK()
                     DispatchQueue.main.async {
                         commandKReturnTab = nil
@@ -587,6 +608,7 @@ struct MainView: View {
         }
         .onChange(of: currentDestination) { _, newDest in
             AppPerformanceInstrumentation.event("destination-switch")
+            pageFocusPresentation.exit()
             // Dismiss focus mode when navigating via sidebar
             FocusNavigationCoordinator.shared.close()
             // Track last-used thinkspace for T-key navigation
@@ -624,6 +646,7 @@ struct MainView: View {
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showCreatorProfile)
         .onAppear {
             FocusNavigationCoordinator.shared.appState = appState
+            FocusNavigationCoordinator.shared.pageFocusPresentation = pageFocusPresentation
             setupRightClickMonitor()
             setupGlobalKeyMonitor()
             configureProMotion()
@@ -660,8 +683,9 @@ struct MainView: View {
     private var notificationRouterActions: MainNotificationRouter.Actions {
         .init(
             presentCommandK: presentCommandK,
+            presentCommandKPicker: presentCommandKPicker,
             preserveCommandKBehindFocusMode: preserveCommandKBehindFocusMode,
-            openAtomFromCommandK: handleOpenAtomFromCommandK(atomUUID:),
+            openAtomFromCommandK: { handleOpenAtomFromCommandK(atomUUID: $0, spaceID: $1) },
             goToObjectFromCommandK: handleGoToObjectFromCommandK(atomUUID:),
             closeCommandK: { closeCommandK() },
             closeCommandKIfOpen: closeCommandKIfOpen,
@@ -676,9 +700,10 @@ struct MainView: View {
             openCollaboratorPane: handleOpenCollaboratorPane(atomUUID:presetId:),
             openInlineAssistantPane: openInlineAssistantPane,
             navigateToLastThinkspace: navigateToLastThinkspace,
-            fileAtomIntoThinkspace: { atomUUID, targetThinkspaceId in
+            addCommandKOriginal: { commandKViewModel.addSelectedOriginals(fallbackUUID: $0) },
+            fileAtomIntoThinkspace: { atomUUIDs, targetThinkspaceId in
                 Task { @MainActor in
-                    await fileAtomIntoThinkspace(atomUUID: atomUUID, targetThinkspaceId: targetThinkspaceId)
+                    await fileAtomIntoThinkspace(atomUUIDs: atomUUIDs, targetThinkspaceId: targetThinkspaceId)
                 }
             },
             switchToThinkspace: handleSwitchToThinkspace(atomID:),
@@ -693,11 +718,12 @@ struct MainView: View {
         GeometryReader { geo in
             let sidebarLayout = sidebarLayoutMetrics(for: geo.size)
             let contentPushOffset = MainSidebarContentLayoutPolicy.contentLeadingInset(
-                for: currentDestination,
-                isSidebarVisible: isSidebarVisible,
+                for: appState.focusedEntity?.type == .note ? .commandCenter : currentDestination,
+                isSidebarVisible: !pageFocusPresentation.isFocused && isSidebarVisible,
                 isSidebarHidden: isSidebarHidden,
                 isHoverRevealed: isSidebarHoverRevealed,
-                isFocusModeActive: appState.focusedEntity != nil,
+                isFocusModeActive: isFocusModeActive,
+                isPageFocused: pageFocusPresentation.isFocused,
                 sidebarReservedWidth: sidebarLayout.reservedWidth
             )
 
@@ -739,7 +765,7 @@ struct MainView: View {
                 // In a focus mode the sidebar is a transient overlay above the
                 // full-screen focus surface (zIndex 196 > the container's 195);
                 // outside focus it's the docked panel at its usual layer.
-                if isFocusModeActive ? isSidebarFocusRevealed : isSidebarVisible {
+                if !pageFocusPresentation.isFocused && (isFocusModeActive ? isSidebarFocusRevealed : isSidebarVisible) {
                     sidebarPanel(cornerRadius: sidebarLayout.cornerRadius)
                         .padding(.leading, sidebarLayout.leadingInset)
                         .padding(.trailing, sidebarLayout.trailingInset)
@@ -751,15 +777,15 @@ struct MainView: View {
                         )
                         .transition(.move(edge: .leading).combined(with: .opacity))
                         .onHover { handleSidebarPanelHover($0) }
-                        .zIndex(isFocusModeActive ? 196 : 20)
+                        .zIndex(appState.focusedEntity != nil ? 196 : 20)
                 }
 
-                if isSidebarHidden && appState.focusedEntity == nil {
+                if isSidebarHidden && !isFocusModeActive {
                     sidebarHoverRevealTrigger(height: geo.size.height)
                         .zIndex(200)
 
                     // A space's chrome row carries its own toggle island.
-                    if !isSidebarHoverRevealed && !isSpaceDestination {
+                    if !isSidebarHoverRevealed && (!isSpaceDestination || appState.focusedEntity?.type == .note) {
                         sidebarToggleButton
                             .zIndex(202)
                     }
@@ -776,7 +802,7 @@ struct MainView: View {
                 // baseline — the global copy shows only outside focus modes.
                 // A space's chrome row embeds one the same way, so the
                 // floating copy stands down on every space.
-                if appState.focusedEntity == nil && !isSpaceDestination {
+                if !pageFocusPresentation.isFocused && appState.focusedEntity == nil && !isSpaceDestination {
                     NavigationTrailChrome(
                         onBack: { navigateTrailBack() },
                         onForward: { navigateTrailForward() },
@@ -893,6 +919,9 @@ struct MainView: View {
             .onChange(of: sidebarPanelWidth) { _, _ in
                 updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
             }
+            .onChange(of: pageFocusPresentation.isFocused) { _, _ in
+                updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
+            }
         }
     }
 
@@ -904,7 +933,7 @@ struct MainView: View {
             currentDestination: Binding(
                 get: { currentDestination },
                 set: { newDestination in
-                    if isFocusModeActive {
+                    if appState.focusedEntity != nil || pageFocusPresentation.isFocused {
                         FocusNavigationCoordinator.shared.close()
                     }
                     currentDestination = newDestination
@@ -917,6 +946,7 @@ struct MainView: View {
             commandCenterViewModel: commandCenterViewModel,
             pipelineModel: pipelinePageModel,
             cornerRadius: cornerRadius,
+            showsDestinationContext: appState.focusedEntity?.type != .note,
             sidebarButtonTitle: sidebarButtonTitle,
             sidebarButtonHelp: sidebarButtonHelp,
             onClose: { handleSidebarButtonPress() },
@@ -926,7 +956,7 @@ struct MainView: View {
             // reports here, making this the one place that guarantees
             // sidebar navigation always leaves focus mode.
             onNavigate: {
-                if isFocusModeActive {
+                if appState.focusedEntity != nil || pageFocusPresentation.isFocused {
                     FocusNavigationCoordinator.shared.close()
                 }
             }
@@ -961,7 +991,8 @@ struct MainView: View {
     }
 
     private var isFocusModeActive: Bool {
-        appState.focusedEntity != nil
+        pageFocusPresentation.isFocused ||
+            (appState.focusedEntity != nil && appState.focusedEntity?.type != .note)
     }
 
     private var sidebarAnimation: Animation? {
@@ -1120,7 +1151,7 @@ struct MainView: View {
 
     private func updateSidebarInteractionWidth(reservedWidth: CGFloat? = nil) {
         let nextReservedWidth = reservedWidth ?? sidebarReservedWidth
-        let nextInteractionWidth = isSidebarVisible ? nextReservedWidth : 0
+        let nextInteractionWidth = !pageFocusPresentation.isFocused && isSidebarVisible ? nextReservedWidth : 0
 
         if sidebarReservedWidth != nextReservedWidth {
             sidebarReservedWidth = nextReservedWidth
@@ -1154,6 +1185,7 @@ struct MainView: View {
     /// a focus mode it flips the transient overlay; outside it flips the
     /// persistent docked state.
     private func handleGlobalSidebarToggle() {
+        if pageFocusPresentation.exit() { return }
         if isFocusModeActive {
             withAnimation(sidebarAnimation) {
                 isSidebarFocusRevealed.toggle()
@@ -1176,7 +1208,7 @@ struct MainView: View {
     private func handleSidebarRevealTriggerHover(_ hovering: Bool) {
         isHoveringSidebarRevealTrigger = hovering
 
-        guard isSidebarHidden, appState.focusedEntity == nil else {
+        guard isSidebarHidden, !isFocusModeActive else {
             if !isSidebarHidden {
                 cancelSidebarHoverClose()
             }
@@ -1504,16 +1536,22 @@ struct MainView: View {
             // default, so its first open always seats a panel). Study surfaces
             // already crossfade; every other focus mode keeps the bloom.
             let usesPlainFade = isStudy
+                || focusEntity.type == .note
                 || focusEntity.type == .idea
                 || focusEntity.type == .connection
             FocusModeView(entity: focusEntity)
+                .padding(.leading, focusEntity.type == .note ? contentPushOffset : 0)
+                .environment(\.unifiedPageNavigationInset,
+                    focusEntity.type == .note && isSidebarHidden && !isSidebarHoverRevealed && !pageFocusPresentation.isFocused ? 60 : 0)
+                // Seat the Page once at its final Focus width. TextKit layout
+                // must not follow the sidebar's per-frame spring proposals.
+                .animation(nil, value: pageFocusPresentation.isFocused)
                 .id(focusEntity)
                 .environmentObject(appState)
                 .environmentObject(database)
-                // Full-screen surface: never rides the sidebar push offset,
-                // so the entrance doesn't slide sideways while it fades.
-                // Study surfaces arrive like a destination change (content
-                // crossfade); other focus modes bloom from the click point.
+                // Pages occupy the regular document slot beside the app
+                // sidebar. Other entities keep their existing full-screen
+                // surface and transition.
                 .transition(usesPlainFade ? .opacity : focusModeBloomTransition)
         }
     }
@@ -1948,54 +1986,15 @@ struct MainView: View {
         }
     }
 
-    /// Files an atom into a thinkspace without navigating there (⌘K
-    /// drop-on-result). Moves the atom's existing canvas block when one
-    /// exists anywhere; otherwise inserts a fresh block row directly into
-    /// the target space.
+    /// Adding an original keeps every other Space membership and never
+    /// assigns a canvas position. The Space writer owns the batch and undo.
     @MainActor
-    private func fileAtomIntoThinkspace(atomUUID: String, targetThinkspaceId: String) async {
-        // Land at the target space's last-known viewport center — same recipe
-        // as the sidebar cross-thinkspace drop (never a (0,0) placeholder).
-        let finalPosition: CGPoint
-        if let targetSpace = ThinkspaceManager.shared.thinkspaces.first(where: { $0.id == targetThinkspaceId }) {
-            let viewportSize = NSApp.keyWindow?.contentView?.bounds.size
-                ?? NSApp.mainWindow?.contentView?.bounds.size
-                ?? CGSize(width: 1200, height: 800)
-            finalPosition = CGPoint(
-                x: viewportSize.width / 2 - targetSpace.panOffset.width,
-                y: viewportSize.height / 2 - targetSpace.panOffset.height
-            )
-        } else {
-            finalPosition = CGPoint(x: 200, y: 200)
-        }
-
+    private func fileAtomIntoThinkspace(atomUUIDs: [String], targetThinkspaceId: String) async {
         do {
-            if let row = try await SpatialEngine.findThinkspaceBlockRow(entityUuid: atomUUID) {
-                guard row.thinkspaceId != targetThinkspaceId else { return }
-                try await SpatialEngine.persistCrossThinkspaceMove(
-                    blockId: row.blockId,
-                    targetThinkspaceId: targetThinkspaceId,
-                    position: finalPosition
-                )
-                // A mounted source canvas drops the block from memory; a
-                // mounted target reloads.
-                CanvasPendingPlacementQueue.shared.enqueue(
-                    name: CosmoNotification.Canvas.crossThinkspaceDropBlock,
-                    userInfo: [
-                        "blockId": row.blockId,
-                        "entityUuid": atomUUID,
-                        "thinkspaceId": targetThinkspaceId,
-                        "positionX": finalPosition.x,
-                        "positionY": finalPosition.y
-                    ]
-                )
-            } else if let atom = try await AtomRepository.shared.fetch(uuid: atomUUID) {
-                let block = CanvasBlock.fromAtom(atom, position: finalPosition)
-                try await SpatialEngine.persistBlockToUnmountedThinkspace(block, thinkspaceId: targetThinkspaceId)
-            }
+            try await SpaceCompositionService.addOriginals(atomUUIDs, in: targetThinkspaceId)
+            commandKViewModel.actionStatusMessage = "Added to Space"
         } catch {
-            PersistenceHealth.note(.writeFailure, context: "commandK.fileAtomIntoThinkspace", detail: "atom \(atomUUID) → \(targetThinkspaceId): \(error)")
-            print("❌ ⌘K filing failed: \(error)")
+            commandKViewModel.actionStatusMessage = error.localizedDescription
         }
     }
 
@@ -2028,13 +2027,47 @@ struct MainView: View {
         guard !showCommandK, clearCommandKAfterDismissal else { return }
         commandKViewModel.clear()
         clearCommandKAfterDismissal = false
+        if let responder = pickerPreviousResponder { pickerPreviousWindow?.makeFirstResponder(responder) }
+        pickerPreviousResponder = nil
+        pickerPreviousWindow = nil
+    }
+
+    private func presentCommandKPicker(_ request: CommandKPickerRequest) {
+        guard commandKViewModel.selectionPicker?.isConfirming != true else { return }
+        if !showCommandK {
+            pickerPreviousWindow = NSApp.keyWindow
+            pickerPreviousResponder = NSApp.keyWindow?.firstResponder
+        }
+        applyCommandKPresentation(.present)
+        commandKViewModel.beginSelectionPicker(request)
     }
 
     private func presentCommandK() {
+        let replacingPicker = commandKViewModel.isSelectionPicker
+        if replacingPicker {
+            guard commandKViewModel.selectionPicker?.isConfirming != true else { return }
+            commandKViewModel.clear()
+        }
+        guard !showCommandK || replacingPicker else { applyCommandKPresentation(.present); return }
+        let context: CommandKSpaceContext?
+        if case .thinkspace(let id) = currentDestination,
+           let space = ThinkspaceManager.shared.thinkspaces.first(where: { $0.id == id }) {
+            let store = SpaceWorkspaceStore.shared
+            let location = store.location(id)
+            let atom = store.selectedItem(in: id)
+            let path = atom.flatMap { item in store.snapshots[id].map { CommandKSpaceService.navigationPath(to: item.uuid, in: $0) } } ?? []
+            context = CommandKSpaceContext(spaceID: id, spaceTitle: space.name,
+                containerUUID: location.itemUUID, containerTitle: atom?.title,
+                containerKind: atom?.spaceCompositionKind, view: location.itemUUID == nil ? nil : location.view,
+                path: path.map { $0.title ?? "Untitled" })
+        } else { context = nil }
         applyCommandKPresentation(.present)
+        commandKViewModel.captureSpaceContext(context)
     }
 
     private func closeCommandK(clearViewModel: Bool = true) {
+        guard commandKViewModel.selectionPicker?.isConfirming != true else { return }
+        if commandKViewModel.isSelectionPicker { commandKViewModel.selectionPickerTask?.cancel() }
         if showCommandK {
             FocusModeEditorBlur.clearFirstResponder(in: NSApp.keyWindow)
         }
@@ -2083,6 +2116,10 @@ struct MainView: View {
 
             // Escape to dismiss overlays (only on keyDown) — peels back one layer at a time
             if event.type == .keyDown, event.keyCode == 53 {  // Escape key
+                if showCommandK, commandKViewModel.isSelectionPicker {
+                    commandKViewModel.cancelSelectionPicker()
+                    return nil
+                }
                 // 0. Peek overlay
                 if PeekController.shared.isPresented {
                     withAnimation(ProMotionSprings.snappy) {
@@ -2171,6 +2208,10 @@ struct MainView: View {
                 if EditorOverlayEscapeCoordinator.shared.dismissTopOverlay() {
                     return nil
                 }
+
+                // Page Focus only changes visibility; Escape first restores
+                // the same editor with its sidebar and pane arrangement.
+                if pageFocusPresentation.exit() { return nil }
 
                 // 8. Focus mode
                 if appState.focusedEntity != nil {
@@ -2627,62 +2668,41 @@ struct MainView: View {
 
     /// Handles opening an atom from Command-K by UUID
     /// Fetches the atom type and routes to the appropriate view
-    private func handleOpenAtomFromCommandK(atomUUID: String) {
-        commandKNavigationTask?.cancel()
-        let requestID = UUID()
-        commandKNavigationRequestID = requestID
-
-        // Hide Command-K behind focus mode (keep alive for state preservation)
-        preserveCommandKBehindFocusMode()
-
-        // Always open in focus mode — works from any view. The coordinator
-        // preloads the atom before presenting, so no artificial delay needed.
-        commandKReturnTab = .database
-        FocusNavigationCoordinator.shared.open(atomUUID: atomUUID)
+    private func handleOpenAtomFromCommandK(atomUUID: String, spaceID: String? = nil) {
+        navigateCommandKObject(atomUUID, exactSpaceID: spaceID, revealLocation: false)
     }
 
-    /// Routes Command-K "Go to Object" to the atom's spatial home.
-    /// Placed atoms open on their primary thinkspace canvas; unplaced atoms open in Inbox.
     private func handleGoToObjectFromCommandK(atomUUID: String) {
+        navigateCommandKObject(atomUUID, exactSpaceID: nil, revealLocation: true)
+    }
+
+    private func navigateCommandKObject(_ uuid: String, exactSpaceID: String?, revealLocation: Bool) {
         commandKNavigationTask?.cancel()
         let requestID = UUID()
         commandKNavigationRequestID = requestID
-
-        preserveCommandKBehindFocusMode()
-
+        let origin = commandKViewModel.spaceContext
+        let paletteWasVisible = showCommandK
+        // The new result owns its own return intent. Clear the old one before
+        // an awaited workspace open can close the previous focused entity.
+        commandKReturnTab = nil
+        commandKBehindFocusMode = false
+        commandKViewModel.actionStatusMessage = nil
         commandKNavigationTask = Task { @MainActor in
-            let memberships = (try? await AtomRepository.shared.fetchThinkspaceMembership(for: atomUUID)) ?? []
-            guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
-
-            if let targetThinkspaceId = memberships.first {
-                currentDestination = .thinkspace(id: targetThinkspaceId)
-                do {
-                    try await Task.sleep(for: .milliseconds(350))
-                    guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
-
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.Navigation.openEntityOnCanvas,
-                        object: nil,
-                        userInfo: ["atomUUID": atomUUID]
-                    )
-                } catch is CancellationError {
-                    return
-                } catch {
-                    guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
+            do {
+                let presentation = try await CommandKSpaceService.openAtom(uuid, exactSpaceID: exactSpaceID,
+                    preferredSpaceID: origin?.spaceID, revealLocation: revealLocation)
+                guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
+                if CommandKFocusRestorePolicy.shouldPreservePalette(wasVisible: paletteWasVisible, presentation: presentation) {
+                    commandKReturnTab = .database
+                    preserveCommandKBehindFocusMode()
+                } else {
+                    closeCommandK()
                 }
-            } else {
-                // No thinkspace home — open the atom directly in focus mode.
-                // (The inbox shows only explicit captures now; it is not a
-                // browsing surface for unplaced database objects.)
-                if let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
-                    guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
-                    let entityType = mapAtomTypeToEntityType(atom.type)
-                    NotificationCenter.default.post(
-                        name: .enterFocusMode,
-                        object: nil,
-                        userInfo: ["type": entityType, "id": atom.id ?? 0]
-                    )
-                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
+                commandKViewModel.actionStatusMessage = error.localizedDescription
             }
         }
     }

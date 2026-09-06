@@ -14,6 +14,7 @@ final class SpaceCompositionCanvasSession {
     var error: String?
     var onOpen: ((Atom) -> Void)?
     var selectedUUID: String?
+    @ObservationIgnored var insertionOrigin: CGPoint = .zero
     var hasPendingEdits: Bool { !pending.isEmpty }
     var scopeID: String { "composition:\(spaceID):\(containerUUID)" }
     var cameraKey: String { "cosmo.space.collection.camera.mac.\(containerUUID).native" }
@@ -158,6 +159,68 @@ final class SpaceCompositionCanvasSession {
             _ = commit(patch, title: memberBefore == false ? "Add to group canvas" : "Place on canvas")
             return project(atom, index: items.firstIndex(where: { $0.uuid == atom.uuid }) ?? 0)
         } catch { report(error); return nil }
+    }
+
+    /// Picker additions are a single committed batch. A failed confirmation stays
+    /// in the picker instead of joining the canvas's deferred gesture queue.
+    func addExisting(_ uuids: [String], near origin: CGPoint) async throws {
+        guard !hasPendingEdits, let expectedKind = container?.spaceCompositionKind else {
+            throw SpaceCompositionError.conflict
+        }
+        var seen = Set<String>()
+        let ids = uuids.filter { seen.insert($0).inserted }
+        guard !ids.isEmpty else { return }
+        let saved = try database.write { db -> (Atom, SpaceCanvasPatch) in
+            let snapshot = try SpaceCompositionService.captureSnapshot(in: spaceID, db: db)
+            guard snapshot.atomsByUUID[containerUUID] != nil else { throw SpaceCompositionError.notFound }
+            let fresh = try SpaceCanvasPersistence.container(containerUUID, db: db)
+            let metadata = try fresh.decodedSpaceComposition() ?? SpaceCompositionMetadata()
+            guard metadata.kind == expectedKind else { throw SpaceCompositionError.conflict }
+            let hidden = Set(try fresh.decodedSpaceCanvas().hiddenItemUUIDs)
+            let existing = try SpaceCanvasPersistence.items(in: fresh, db: db)
+            var occupied = existing.filter { !hidden.contains($0.uuid) }.map { atom -> CGRect in
+                let native = CanvasBlock.fromAtom(atom, position: .zero)
+                let fallback = initialPositions[atom.uuid] ?? .zero
+                let placement = Self.bounded(metadata.placements.first { $0.itemUUID == atom.uuid } ??
+                    .init(itemUUID: atom.uuid, x: fallback.x, y: fallback.y), fallback: native.size)
+                return CGRect(x: placement.x, y: placement.y, width: placement.width ?? native.size.width,
+                              height: placement.height ?? native.size.height)
+            }
+            var patch = SpaceCanvasPatch()
+            for uuid in ids {
+                guard uuid != containerUUID else { throw SpaceCompositionError.cycle }
+                guard let atom = try Atom.filter(Column("uuid") == uuid).filter(Column("is_deleted") == false).fetchOne(db) else {
+                    throw SpaceCompositionError.notFound
+                }
+                guard ![AtomType.thinkspace, .deepDive, .inquirySession].contains(atom.type) else { throw SpaceCompositionError.invalidKind }
+                let before = metadata.placements.first { $0.itemUUID == uuid }
+                if before != nil && !hidden.contains(uuid) { continue }
+                let native = CanvasBlock.fromAtom(atom, position: .zero)
+                let point = try SpaceCompositionService.availableCanvasPosition(size: native.size, near: origin, occupied: occupied)
+                let after = SpaceCompositionPlacement(itemUUID: uuid, x: point.x - native.size.width / 2,
+                    y: point.y - native.size.height / 2, width: native.size.width, height: native.size.height)
+                let needsMember = metadata.kind == .group && !metadata.memberUUIDs.contains(uuid)
+                let needsReference = metadata.kind.isAuthored && atom.spaceComposition?.parentUUID != containerUUID &&
+                    !metadata.references.contains { $0.sourceUUID == uuid }
+                let reference = needsReference ? SpaceCompositionReference(id: "canvas:\(containerUUID):\(uuid)",
+                    sourceUUID: uuid, sourceTitle: atom.title) : nil
+                patch.placements.append(.init(itemUUID: uuid, before: before, after: after,
+                    hiddenBefore: hidden.contains(uuid), hiddenAfter: false, memberBefore: needsMember ? false : nil,
+                    memberAfter: needsMember ? true : nil, referenceAfter: reference))
+                occupied.append(CGRect(x: after.x, y: after.y, width: native.size.width, height: native.size.height))
+            }
+            guard !patch.isEmpty else { return (fresh, patch) }
+            return (try SpaceCanvasPersistence.apply(patch, to: containerUUID, db: db), patch)
+        }
+        if !saved.1.isEmpty { finish(saved.0, patch: saved.1, title: "Add to canvas", registerUndo: true) }
+        reload()
+    }
+
+    func presentExistingPicker() {
+        let origin = insertionOrigin
+        CommandKPickerPresentation.present(spaceID: spaceID, targetUUID: containerUUID, purpose: .placeOnCanvas,
+            alreadyIncludedUUIDs: Set(projectedBlocks().map(\.entityUuid)),
+            onConfirm: { [self] ids in try await addExisting(ids, near: origin) })
     }
 
     func hide(_ block: CanvasBlock) {

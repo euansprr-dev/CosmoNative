@@ -94,7 +94,7 @@ struct AtomWindowRootView: View {
         case .content:
             ContentFocusModeView(atom: atom, onClose: handleClose)
         case .note:
-            NoteFocusModeView(atom: atom, onClose: handleClose)
+            UnifiedPageView(atom: atom, onClose: handleClose)
         case .cosmoAI:
             CosmoAIFocusModeView(atom: atom, onClose: handleClose)
         case .extract:

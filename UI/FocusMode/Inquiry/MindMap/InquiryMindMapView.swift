@@ -34,16 +34,14 @@ struct InquiryMindMapView: View {
     @State private var collapsedIds: Set<String> = []
     /// Ghost proposal under the pointer — its members wear a matching wash.
     @State private var hoveredProposalKey: String?
+    @State private var flattenedNodes: [MindMapNode] = []
+    @State private var nodesByIdIndex: [String: MindMapNode] = [:]
+    @State private var branchIndices: [String: Int] = [:]
+    @State private var layout = MindMapLayout(positions: [:], depths: [:], size: .zero, edges: [])
+    @State private var viewportSize: CGSize = .zero
+    @State private var didInitialFit = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var effectiveRoot: MindMapNode {
-        MindMapBuilder.pruned(root: root, collapsed: collapsedIds)
-    }
-
-    private var layout: MindMapLayout {
-        MindMapLayoutEngine.layout(root: effectiveRoot, nodeSize: { InquiryMindMapNodeCard.size(for: $0) })
-    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -56,32 +54,40 @@ struct InquiryMindMapView: View {
                 .contentShape(Rectangle())
                 .gesture(panGesture)
                 .gesture(zoomGesture)
-                .onTapGesture(count: 2) { resetViewport() }
+                .onTapGesture(count: 2) { fitViewport() }
+                .onChange(of: proxy.size, initial: true) { _, size in
+                    viewportSize = size
+                    if !didInitialFit { fitViewport(animated: false) }
+                }
         }
         .clipped()
         .overlay(alignment: .bottomTrailing) { resetControl }
-        .onAppear { hasAppeared = true }
+        .onAppear { rebuildLayout(); hasAppeared = true }
+        .onChange(of: root) { _, _ in rebuildLayout() }
+        .onChange(of: collapsedIds) { _, _ in rebuildLayout() }
     }
 
     /// Quiet reset affordance — double-click already resets, but nothing on
     /// screen said so; the control also carries the tooltip that teaches it.
-    @ViewBuilder
     private var resetControl: some View {
-        if scale != 1 || offset != .zero {
-            Button(action: resetViewport) {
-                Image(systemName: "arrow.counterclockwise")
-                    .font(DS.caption.weight(.semibold))
-                    .foregroundStyle(DS.textSecondary)
-                    .frame(width: 30, height: 30)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .glassEffect(.regular.interactive(), in: .circle)
-            .padding(DS.space16)
-            .transition(.opacity)
-            .help("Reset the view (or double-click anywhere)")
-            .accessibilityLabel("Reset map view")
+        HStack(spacing: DS.space4) {
+            viewportButton("minus", label: "Zoom out") { changeZoom(by: 1 / 1.2) }
+            Text("\(Int((scale * 100).rounded()))%")
+                .font(DS.caption.monospacedDigit()).foregroundStyle(DS.textSecondary).frame(minWidth: 44)
+                .accessibilityLabel("Map zoom \(Int((scale * 100).rounded())) percent")
+            viewportButton("plus", label: "Zoom in") { changeZoom(by: 1.2) }
+            viewportButton("arrow.up.left.and.arrow.down.right", label: "Fit map (or double-click anywhere)") { fitViewport() }
         }
+        .padding(DS.space4)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .padding(DS.space16)
+    }
+
+    private func viewportButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(DS.caption.weight(.semibold)).foregroundStyle(DS.textSecondary)
+                .frame(width: 36, height: 36).contentShape(Circle())
+        }.buttonStyle(.plain).help(label).accessibilityLabel(label)
     }
 
     // MARK: - Content
@@ -223,13 +229,13 @@ struct InquiryMindMapView: View {
             onAcceptProposal: onAcceptProposal,
             onDismissProposal: onDismissProposal,
             onGhostHover: { key in
-                withAnimation(ProMotionSprings.hover) { hoveredProposalKey = key }
+                withAnimation(reduceMotion ? nil : ProMotionSprings.hover) { hoveredProposalKey = key }
             }
         )
         .contextMenu { conceptContextMenu(node) }
         .position(position)
         .opacity(hasAppeared ? 1 : 0)
-        .animation(ProMotionSprings.gentle.delay(Double(depth) * 0.06), value: hasAppeared)
+        .animation(reduceMotion ? nil : ProMotionSprings.gentle.delay(Double(min(depth, 8)) * 0.06), value: hasAppeared)
     }
 
     /// "Move under…" reparenting for concept nodes — the user's final say
@@ -266,19 +272,29 @@ struct InquiryMindMapView: View {
     private var zoomGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                scale = min(2.0, max(0.4, pinchBaseScale * value.magnification))
+                scale = min(2.5, max(0.08, pinchBaseScale * value.magnification))
             }
             .onEnded { _ in
                 pinchBaseScale = scale
             }
     }
 
-    private func resetViewport() {
-        withAnimation(ProMotionSprings.gentle) {
+    private func fitViewport(animated: Bool = true) {
+        guard viewportSize.width > 0, viewportSize.height > 0, layout.size.width > 0, layout.size.height > 0 else { return }
+        let fit = min(1, max(0.08, min(viewportSize.width / layout.size.width, viewportSize.height / layout.size.height)))
+        withAnimation(animated && !reduceMotion ? ProMotionSprings.gentle : nil) {
             offset = .zero
             dragStart = .zero
-            scale = 1
-            pinchBaseScale = 1
+            scale = fit
+            pinchBaseScale = fit
+        }
+        didInitialFit = true
+    }
+
+    private func changeZoom(by factor: CGFloat) {
+        let next = min(2.5, max(0.08, scale * factor))
+        withAnimation(reduceMotion ? nil : ProMotionSprings.snappy) {
+            scale = next; pinchBaseScale = next
         }
     }
 
@@ -296,15 +312,29 @@ struct InquiryMindMapView: View {
 
     // MARK: - Helpers
 
-    private var flattenedNodes: [MindMapNode] {
-        func flatten(_ node: MindMapNode) -> [MindMapNode] {
-            [node] + node.children.flatMap(flatten)
+    /// Structure and all indexes are rebuilt only when the graph or its folds
+    /// change. Panning and magnification update transforms, never tree layout.
+    private func rebuildLayout() {
+        var expandedForMatch = Set<String>()
+        func activePath(_ node: MindMapNode) -> Bool {
+            let hasActiveChild = node.children.map(activePath).contains(true)
+            if hasActiveChild { expandedForMatch.insert(node.id) }
+            return node.isActive || hasActiveChild
         }
-        return flatten(effectiveRoot)
-    }
-
-    private var nodesByIdIndex: [String: MindMapNode] {
-        Dictionary(flattenedNodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        _ = activePath(root)
+        let pruned = MindMapBuilder.pruned(root: root, collapsed: collapsedIds.subtracting(expandedForMatch))
+        var nodes: [MindMapNode] = [], branches: [String: Int] = [:]
+        func walk(_ node: MindMapNode, branch: Int) {
+            nodes.append(node); branches[node.id] = branch
+            for child in node.children { walk(child, branch: branch) }
+        }
+        nodes.append(pruned); branches[pruned.id] = -1
+        for (index, child) in pruned.children.enumerated() { walk(child, branch: index) }
+        flattenedNodes = nodes
+        nodesByIdIndex = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        branchIndices = branches
+        layout = MindMapLayoutEngine.layout(root: pruned, nodeSize: { InquiryMindMapNodeCard.size(for: $0) })
+        if !didInitialFit { fitViewport(animated: false) }
     }
 
     /// Member node ids of the hovered ghost proposal — they wear its wash.
@@ -316,15 +346,7 @@ struct InquiryMindMapView: View {
 
     /// Which top-level branch a node descends from (root itself = -1).
     private func branchIndex(of node: MindMapNode) -> Int {
-        guard node.id != effectiveRoot.id else { return -1 }
-        for (index, branch) in effectiveRoot.children.enumerated() {
-            if branch.id == node.id || contains(branch, nodeId: node.id) { return index }
-        }
-        return -1
-    }
-
-    private func contains(_ node: MindMapNode, nodeId: String) -> Bool {
-        node.children.contains { $0.id == nodeId || contains($0, nodeId: nodeId) }
+        branchIndices[node.id] ?? -1
     }
 
     static func branchColor(_ index: Int) -> Color {

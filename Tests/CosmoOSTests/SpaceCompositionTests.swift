@@ -196,6 +196,94 @@ final class SpaceCompositionServiceTests: XCTestCase {
         XCTAssertTrue(rows.allSatisfy { $0.entityId > 0 })
     }
 
+    private func canvasRows(in space: Atom) async throws -> [CanvasBlockRecord] {
+        try await CosmoDatabase.shared.asyncRead { db in
+            try CanvasBlockRecord.filter(Column("thinkspace_id") == space.uuid)
+                .filter(Column("is_deleted") == false).fetchAll(db)
+        }
+    }
+
+    func testCanvasCreationSavesGroupPlacementBeforeReturning() async throws {
+        let space = try await atom(.thinkspace)
+        CosmoUndoManager.shared.clearHistory()
+        let group = try await SpaceCompositionService.create(kind: .group, title: "References", in: space.uuid,
+            placingNear: CGPoint(x: 640, y: 480))
+        created.insert(group.uuid)
+        let rows = try await canvasRows(in: space)
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.isPlaced, true)
+        XCTAssertEqual(rows.first?.positionX, 640)
+        await CosmoUndoManager.shared.undo()
+        let undone = try await canvasRows(in: space)
+        XCTAssertTrue(undone.isEmpty)
+        XCTAssertFalse(CosmoUndoManager.shared.canUndo)
+    }
+
+    func testCanvasBatchPlacesWithoutOverlapAndUndoesExistingMembershipPlacement() async throws {
+        let space = try await atom(.thinkspace), other = try await atom(.thinkspace)
+        let one = try await page(in: space), two = try await atom(.image)
+        try await SpaceCompositionService.addOriginals([one.uuid], in: other.uuid, placingNear: CGPoint(x: 80, y: 90))
+        CosmoUndoManager.shared.clearHistory()
+        try await SpaceCompositionService.addOriginals([one.uuid, two.uuid, one.uuid], in: space.uuid,
+            placingNear: CGPoint(x: 500, y: 400))
+        let saved = try await canvasRows(in: space)
+        XCTAssertEqual(saved.count, 2)
+        XCTAssertTrue(saved.allSatisfy { $0.isPlaced == true })
+        let rects = saved.map { row in CGRect(x: CGFloat(row.positionX) - CGFloat(row.width ?? 320) / 2,
+            y: CGFloat(row.positionY) - CGFloat(row.height ?? 240) / 2,
+            width: CGFloat(row.width ?? 320), height: CGFloat(row.height ?? 240)) }
+        XCTAssertFalse(rects[0].intersects(rects[1]))
+        try await SpaceCompositionService.addOriginals([one.uuid], in: space.uuid, placingNear: CGPoint(x: -5000, y: -5000))
+        let repeated = try await canvasRows(in: space)
+        XCTAssertEqual(repeated.first { $0.entityUuid == one.uuid }?.positionX, saved.first { $0.entityUuid == one.uuid }?.positionX)
+        await CosmoUndoManager.shared.undo()
+        let undone = try await canvasRows(in: space)
+        XCTAssertEqual(undone.count, 1)
+        XCTAssertEqual(undone.first?.isPlaced, false)
+        XCTAssertEqual(undone.first?.positionX, 0)
+        let otherRows = try await canvasRows(in: other)
+        XCTAssertEqual(otherRows.first?.positionX, 80)
+        await CosmoUndoManager.shared.redo()
+        let redone = try await canvasRows(in: space)
+        XCTAssertEqual(redone.filter { $0.isPlaced == true }.count, 2)
+    }
+
+    func testInvalidCanvasBatchRollsBackMembershipAndPlacement() async throws {
+        let space = try await atom(.thinkspace), image = try await atom(.image)
+        do {
+            try await SpaceCompositionService.addOriginals([image.uuid, "missing"], in: space.uuid, placingNear: .zero)
+            XCTFail("A missing original must roll back the entire selection")
+        } catch { XCTAssertEqual(error as? SpaceCompositionError, .notFound) }
+        let rows = try await canvasRows(in: space)
+        XCTAssertTrue(rows.isEmpty)
+    }
+
+    func testScopedCanvasPickerBatchCommitsAndUndoesTogetherWithoutRootPlacement() async throws {
+        let space = try await atom(.thinkspace), group = try await page(in: space, kind: .group)
+        let image = try await atom(.image), sticky = try await atom(.stickyNote)
+        let session = SpaceCompositionCanvasSession(spaceID: space.uuid, containerUUID: group.uuid)
+        session.reload()
+        do {
+            try await session.addExisting([image.uuid, "missing"], near: .zero)
+            XCTFail("A failed selection must not add an earlier member")
+        } catch { XCTAssertEqual(error as? SpaceCompositionError, .notFound) }
+        XCTAssertFalse(session.hasPendingEdits)
+        let failed = try await fresh(group.uuid)
+        XCTAssertTrue(failed.spaceComposition?.memberUUIDs.isEmpty == true)
+        CosmoUndoManager.shared.clearHistory()
+        try await session.addExisting([image.uuid, sticky.uuid], near: .zero)
+        let saved = try await fresh(group.uuid)
+        XCTAssertEqual(Set(saved.spaceComposition?.memberUUIDs ?? []), [image.uuid, sticky.uuid])
+        XCTAssertEqual(saved.spaceComposition?.placements.count, 2)
+        let rows = try await canvasRows(in: space)
+        XCTAssertFalse(rows.contains { $0.entityUuid == image.uuid || $0.entityUuid == sticky.uuid })
+        await CosmoUndoManager.shared.undo()
+        let undone = try await fresh(group.uuid)
+        XCTAssertTrue(undone.spaceComposition?.memberUUIDs.isEmpty == true)
+        XCTAssertTrue(undone.spaceComposition?.placements.isEmpty == true)
+        XCTAssertFalse(CosmoUndoManager.shared.canUndo)
+    }
+
     func testMovingParentIntoDescendantFailsAtomically() async throws {
         let space = try await atom(.thinkspace)
         let root = try await page(in: space)

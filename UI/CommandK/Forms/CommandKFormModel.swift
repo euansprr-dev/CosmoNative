@@ -7,6 +7,9 @@ enum CommandKInlineFormKind: String, Codable, Equatable {
     case createTask
     case createIdea
     case createNote
+    case createGroup
+    case createBook
+    case createCourse
     case createContent
     case createThinkspace
     case createInquiry
@@ -52,8 +55,10 @@ struct CommandKInlineFormModel: Equatable {
             return "Create Task"
         case .createIdea:
             return "Create Idea"
-        case .createNote:
-            return "Create Page"
+        case .createNote: return "Create Page"
+        case .createGroup: return "Create Group"
+        case .createBook: return "Create Book"
+        case .createCourse: return "Create Course"
         case .createContent:
             return "Create Content"
         case .createThinkspace:
@@ -91,7 +96,7 @@ struct CommandKInlineFormModel: Equatable {
                 return .init(isValid: false, message: "Add a title or the idea itself")
             }
             return .init(isValid: true, message: nil)
-        case .createTask, .createNote, .createContent, .createThinkspace,
+        case .createTask, .createNote, .createGroup, .createBook, .createCourse, .createContent, .createThinkspace,
              .createInquiry, .createQuicklink, .createSnippet, .createRecipe:
             guard !value(for: .title).isEmpty else {
                 return .init(isValid: false, message: "Add a title")
@@ -124,8 +129,10 @@ struct CommandKInlineFormModel: Equatable {
                 name: "create_idea",
                 arguments: compact(["title": value(for: .title), "body": value(for: .body)])
             )
-        case .createNote:
-            return .executeTool(name: "create_note", arguments: compact(["title": value(for: .title)]))
+        case .createNote, .createGroup, .createBook, .createCourse:
+            // The composer owns an explicit Space destination and the existing
+            // composition writer; agent tools cannot infer that destination.
+            return nil
         case .createContent:
             return .executeTool(name: "create_content", arguments: compact(["title": value(for: .title)]))
         case .createThinkspace:
@@ -157,5 +164,17 @@ struct CommandKInlineFormModel: Equatable {
 
     private func compact(_ dictionary: [String: String]) -> [String: String] {
         dictionary.filter { !$0.value.isEmpty }
+    }
+}
+
+extension CommandKInlineFormKind {
+    var compositionKind: SpaceCompositionKind? {
+        switch self {
+        case .createNote: return .page
+        case .createGroup: return .group
+        case .createBook: return .book
+        case .createCourse: return .course
+        default: return nil
+        }
     }
 }

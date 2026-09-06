@@ -35,7 +35,7 @@ enum CortexDetailSubject {
         switch self {
         case .empty: return ""
         case .recent(let i): return i.type.displayName
-        case .result(let r): return r.source.displayName
+        case .result(let r): return r.spaceInfo?.kind?.title ?? r.atomType?.displayName ?? r.source.displayName
         case .library(let item): return item.typeName
         case .swipe: return "Swipe File"
         case .idea: return "Idea"
@@ -72,10 +72,22 @@ enum CortexDetailSubject {
 
     var thumbnailURL: String? {
         if case .recent(let i) = self { return i.thumbnailURL }
+        if case .result(let result) = self { return result.thumbnailURL }
         if case .library(let item) = self { return item.thumbnailURL }
         if case .swipe(let item) = self { return item.thumbnailUrl }
         if case .readwise(let book) = self { return book.coverImageUrl }
         return nil
+    }
+
+    var originalAtomType: AtomType? {
+        switch self {
+        case .recent(let item): return item.type
+        case .result(let result): return result.atomType
+        case .library(let item): return item.atomType
+        case .swipe: return .research
+        case .idea: return .idea
+        case .empty, .readwise, .action: return nil
+        }
     }
 
     var previewText: String? {
@@ -306,7 +318,9 @@ struct CortexDetailPane: View {
             atom = nil
         }
         // Always fetch fresh — a stale warm copy self-corrects here.
-        atom = try? await AtomRepository.shared.fetch(uuid: id)
+        let loaded = try? await AtomRepository.shared.fetch(uuid: id)
+        guard !Task.isCancelled else { return }
+        atom = loaded
     }
 
     private var emptyState: some View {
@@ -328,7 +342,8 @@ struct CortexDetailPane: View {
                 // The hero: the object's content, edge to edge on the one
                 // body surface — no inner card, no inner border; a single
                 // hairline closes the region (the Raycast anatomy).
-                CortexPreviewBlock(subject: subject, atom: atom, matchQuery: viewModel?.query)
+                CortexPreviewBlock(subject: subject, atom: atom, matchQuery: viewModel?.query,
+                    isSelectionPicker: viewModel?.isSelectionPicker == true)
                     .frame(maxWidth: .infinity)
                     .frame(height: previewHeight)
                     .clipped()
@@ -344,7 +359,7 @@ struct CortexDetailPane: View {
                         .lineLimit(3)
 
                     CortexInformationTable(
-                        typeLabel: subject.typeLabel,
+                        typeLabel: informationTypeLabel,
                         created: subject.createdText ?? cortexFormatISO(atom?.createdAt),
                         updated: subject.updatedText ?? cortexFormatISO(atom?.updatedAt),
                         links: subject.linksCount ?? atom?.linksList.count,
@@ -363,9 +378,16 @@ struct CortexDetailPane: View {
     }
 
     private var previewHeight: CGFloat {
+        if viewModel?.isSelectionPicker == true,
+           let type = atom?.type ?? subject.originalAtomType, type == .image || type == .file { return 360 }
         if atom?.toSwipeGalleryItem() != nil { return 380 }
         if let atom, atom.type == .research, !atom.isSwipeFileAtom { return 300 }
         return subject.preferredPreviewHeight
+    }
+
+    private var informationTypeLabel: String {
+        guard viewModel?.isSelectionPicker == true, let atom else { return subject.typeLabel }
+        return atom.isSwipeFileAtom ? "Swipe" : (atom.spaceCompositionKind?.title ?? atom.type.displayName)
     }
 }
 
@@ -410,6 +432,7 @@ private struct CortexPreviewBlock: View {
     /// The live search query — reading excerpts center on and highlight the
     /// matched passage instead of showing the document head.
     var matchQuery: String? = nil
+    var isSelectionPicker = false
 
     /// Transcript decode hoisted off the render path (mirrors
     /// CortexConnectionManuscriptPreview): `readableBody` used to run the
@@ -444,7 +467,18 @@ private struct CortexPreviewBlock: View {
 
     @ViewBuilder
     private var preview: some View {
-        if let item = atom?.toSwipeGalleryItem() {
+        if isSelectionPicker, (atom?.type ?? subject.originalAtomType) == .image {
+            if let path = atom?.imageMetadata?.imagePath ?? subject.thumbnailURL, !path.isEmpty {
+                SpotlightImageContent(urlString: path, contentMode: .fit)
+                    .padding(DS.space12)
+                    .accessibilityLabel("Full preview of \(subject.title)")
+            } else {
+                FilePortalSkinView(thumbnail: nil, systemImage: "photo", caption: "Image preview unavailable")
+            }
+        } else if isSelectionPicker, (atom?.type ?? subject.originalAtomType) == .file,
+                  let uuid = subject.atomUUID {
+            CortexFileOriginalPreview(atomUUID: uuid)
+        } else if let item = atom?.toSwipeGalleryItem() {
             CortexSwipeDomainPreview(item: item, atom: atom)
         } else if let atom, atom.type == .task {
             // A task is an honest object too — due date, notes, checklist on
@@ -581,6 +615,79 @@ private struct CortexPreviewBlock: View {
             font: DS.dateSerif,
             emphasisBackground: subject.accentColor.opacity(0.16)
         )
+    }
+}
+
+/// Reuses the file portal's readers with no persistence callbacks or editing
+/// chrome. Browsing pages and sheets only changes this preview's local state.
+private struct CortexFileOriginalPreview: View {
+    let atomUUID: String
+    @State private var resolveState: FilePortalResolveState = .loading
+    @State private var thumbnail: NSImage?
+
+    var body: some View {
+        Group {
+            switch resolveState {
+            case .loading:
+                ProgressView().controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .unavailable(let message):
+                FilePortalSkinView(thumbnail: nil, systemImage: "doc", caption: message)
+            case .resolved(let file):
+                resolved(file)
+            }
+        }
+        .task(id: atomUUID) { await load() }
+    }
+
+    @ViewBuilder
+    private func resolved(_ file: FilePortalResolvedFile) -> some View {
+        if let url = file.fileURL {
+            switch file.metadata.portalKind {
+            case .pdf:
+                FilePortalPDFView(fileURL: url, initialPageIndex: file.metadata.currentPage ?? 0,
+                    onPageChanged: { _ in })
+            case .spreadsheet, .csv:
+                FilePortalSheetHost(fileURL: url, cacheKey: file.metadata.attachmentUUID,
+                    stamp: file.metadata.thumbStamp, initialSheetIndex: file.metadata.currentSheetIndex ?? 0,
+                    isCompact: true, isContentInteractive: true, isEditable: false,
+                    fallback: { AnyView(fileSkin(file, caption: "Preview unavailable")) })
+            case .generic:
+                fileSkin(file, caption: nil)
+            }
+        } else {
+            fileSkin(file, caption: "File not downloaded on this device")
+        }
+    }
+
+    @ViewBuilder
+    private func fileSkin(_ file: FilePortalResolvedFile, caption: String?) -> some View {
+        if let thumbnail {
+            Image(nsImage: thumbnail).resizable().scaledToFit().padding(DS.space12)
+                .accessibilityLabel(file.metadata.originalFilename)
+        } else {
+            FilePortalSkinView(thumbnail: nil, systemImage: file.metadata.portalKind.placeholderSystemImage,
+                caption: caption ?? file.metadata.originalFilename)
+        }
+    }
+
+    private func load() async {
+        resolveState = .loading
+        thumbnail = nil
+        let state = await FilePortalResolver.resolve(entityUuid: atomUUID)
+        guard !Task.isCancelled else { return }
+        resolveState = state
+        guard case .resolved(let file) = state else { return }
+        let image: NSImage?
+        if let url = file.fileURL, file.metadata.portalKind == .generic {
+            image = await FilePortalThumbnailStore.shared.thumbnail(for: url,
+                cacheKey: file.metadata.attachmentUUID, stamp: file.metadata.thumbStamp, pixelWidth: 900)
+        } else if let url = file.thumbnailFileURL {
+            image = await FilePortalThumbnailStore.shared.thumbnail(for: url,
+                cacheKey: "picker:\(file.metadata.attachmentUUID)", stamp: file.metadata.thumbStamp, pixelWidth: 900)
+        } else { image = nil }
+        guard !Task.isCancelled else { return }
+        thumbnail = image
     }
 }
 

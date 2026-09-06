@@ -1137,6 +1137,18 @@ struct DeepDiveOverviewView: View {
     /// crystallization never overrides it) and reloads the map.
     private func reparentConnection(_ childUUID: String, under parentUUID: String?) async {
         guard var atom = try? await AtomRepository.shared.fetch(uuid: childUUID) else { return }
+        if let parentUUID {
+            var visited: Set<String> = [childUUID]
+            var cursor: String? = parentUUID
+            while let uuid = cursor {
+                guard visited.insert(uuid).inserted,
+                      let parent = try? await AtomRepository.shared.fetch(uuid: uuid),
+                      parent.type == .connection, !parent.isDeleted else { return }
+                cursor = parent.metadataValue(as: ConnectionHierarchyMetadata.self)?.parentConnectionUUID
+            }
+        } else {
+            atom = atom.removingMetadataKeys(["parentConnectionUUID"])
+        }
         atom = atom.mergingMetadataKeys(ConnectionHierarchyMetadata(
             parentConnectionUUID: parentUUID,
             parentPinnedByUser: true
@@ -1177,7 +1189,7 @@ struct DeepDiveOverviewView: View {
             // Seedlings develop from the overview's SEEDLINGS section; the map
             // node is presence, not a door (the Concept Desk arrives next).
             chrome.select(.overview)
-        case .root, .questionGroup:
+        case .root, .questionGroup, .page, .material:
             break
         }
     }

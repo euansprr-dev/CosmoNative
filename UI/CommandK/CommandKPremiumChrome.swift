@@ -395,84 +395,8 @@ extension View {
         )
     }
 
-    /// Context menu for search results (uses atomUUID, no entityId)
-    func commandKSearchResultContextMenu(result: UnifiedSearchResult) -> some View {
-        self.contextMenu {
-            if let uuid = result.atomUUID {
-                Button {
-                    if result.resultKind == .thinkspace, let tid = result.thinkspaceId {
-                        NotificationCenter.default.post(
-                            name: CosmoNotification.Navigation.navigateToThinkspaceById,
-                            object: nil,
-                            userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: tid).userInfo
-                        )
-                        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-                    } else {
-                        NotificationCenter.default.post(
-                            name: CosmoNotification.NodeGraph.openAtomFromCommandK,
-                            object: nil, userInfo: ["atomUUID": uuid]
-                        )
-                        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
-                    }
-                } label: {
-                    Label("Open in Focus Mode", systemImage: "arrow.up.left.and.arrow.down.right")
-                }
-
-                Button {
-                    Task {
-                        if let atom = try? await AtomRepository.shared.fetch(uuid: uuid),
-                           let entityType = EntityType(rawValue: atom.type.rawValue) {
-                            NotificationCenter.default.post(
-                                name: CosmoNotification.Navigation.openAsPane,
-                                object: nil,
-                                userInfo: ["type": entityType, "id": atom.id ?? 0]
-                            )
-                        }
-                        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-                    }
-                } label: {
-                    Label("Open as Pane", systemImage: "rectangle.split.2x1")
-                }
-
-                Button {
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.NodeGraph.addToCanvas,
-                        object: nil,
-                        userInfo: ["atomUUID": uuid]
-                    )
-                } label: {
-                    Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
-                }
-
-                Divider()
-
-                // Soft delete (atoms land in Recently Deleted) — the label
-                // says so, Finder-style, instead of a bare "Delete".
-                // Never swallow the write with `try?`: a silently-failed delete
-                // looked exactly like "sometimes it doesn't move it". Surface it
-                // through PersistenceHealth so a real failure is visible.
-                Button(role: .destructive) {
-                    Task {
-                        do {
-                            try await AtomRepository.shared.delete(uuid: uuid)
-                            await MainActor.run {
-                                CosmoUndoManager.shared.registerAtomDeletion(
-                                    uuid: uuid, actionDescription: "Delete Item"
-                                )
-                            }
-                        } catch {
-                            PersistenceHealth.note(
-                                .writeFailure,
-                                context: "commandK.moveToRecentlyDeleted",
-                                detail: "\(uuid.prefix(8)): \(error)"
-                            )
-                        }
-                    }
-                } label: {
-                    Label("Move to Recently Deleted", systemImage: "trash")
-                }
-            }
-        }
+    func commandKSearchResultContextMenu(result: UnifiedSearchResult, viewModel: CommandKViewModel) -> some View {
+        modifier(CommandKObjectContextMenu(subject: .result(result), viewModel: viewModel))
     }
 
     func commandKSectionChrome(
@@ -485,78 +409,44 @@ extension View {
         modifier(CortexSearchBarPanelModifier(glassID: glassID, glassNamespace: namespace))
     }
 
-    /// Standard right-click menu for any atom card in Command-K
     func commandKCardContextMenu(
-        atomUUID: String,
-        entityId: Int64,
-        atomType: AtomType,
-        isThinkspace: Bool = false,
-        allowsSpatialGoToObject: Bool = false,
-        onDelete: (() -> Void)? = nil
+        atomUUID: String, entityId: Int64, atomType: AtomType, viewModel: CommandKViewModel,
+        isThinkspace: Bool = false, allowsSpatialGoToObject: Bool = false, onDelete: (() -> Void)? = nil
     ) -> some View {
-        self.contextMenu {
-            Button {
-                if isThinkspace {
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.Navigation.navigateToThinkspaceById,
-                        object: nil,
-                        userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: atomUUID).userInfo
-                    )
-                    NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-                } else if let entityType = EntityType(rawValue: atomType.rawValue), entityId > 0 {
-                    NotificationCenter.default.post(
-                        name: .enterFocusMode,
-                        object: nil,
-                        userInfo: ["type": entityType, "id": entityId]
-                    )
-                }
-            } label: {
-                Label(
-                    isThinkspace ? "Open Thinkspace" : "Open in Focus Mode",
-                    systemImage: isThinkspace ? "rectangle.3.group" : "arrow.up.left.and.arrow.down.right"
-                )
-            }
+        modifier(CommandKObjectContextMenu(subject: .recent(RecentDisplayItem(id: atomUUID, title: "",
+            type: isThinkspace ? .thinkspace : atomType, entityId: entityId, relativeDate: "",
+            thumbnailURL: nil, preview: nil)), viewModel: viewModel))
+    }
+}
 
-            Button {
-                let info: [String: Any] = isThinkspace
-                    ? ["thinkspaceId": atomUUID]
-                    : ["type": EntityType(rawValue: atomType.rawValue) as Any, "id": entityId]
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Navigation.openAsPane,
-                    object: nil, userInfo: info
-                )
-                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-            } label: {
-                Label("Open as Pane", systemImage: "rectangle.split.2x1")
-            }
+/// Right-click and the keyboard action panel use the same registry and writer.
+private struct CommandKObjectContextMenu: ViewModifier {
+    let subject: CortexDetailSubject
+    var viewModel: CommandKViewModel
 
-            if !isThinkspace && allowsSpatialGoToObject {
-                Button {
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.NodeGraph.goToObjectFromCommandK,
-                        object: nil,
-                        userInfo: ["atomUUID": atomUUID]
-                    )
-                    NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
-                } label: {
-                    Label("Go to Object", systemImage: "scope")
-                }
+    private var context: CommandKActionContext {
+        let hydrated = viewModel.selectedSpaceAtom.flatMap { $0.uuid == subject.atomUUID ? $0 : nil }
+        let info: CommandKSpaceSearchInfo?
+        if case .result(let result) = subject { info = result.spaceInfo }
+        else { info = hydrated == nil ? nil : viewModel.selectedSpaceInfo }
+        return .init(query: viewModel.query, subject: subject, hydratedAtom: hydrated, mode: viewModel.cortexMode,
+            activeInquirySessionUUID: nil, activeContentDraftUUID: nil, spaceContext: viewModel.spaceContext,
+            selectedSpaceInfo: info, selectedUUIDs: viewModel.selectedUUIDs)
+    }
 
-                Button {
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.NodeGraph.addToCanvas,
-                        object: nil,
-                        userInfo: ["atomUUID": atomUUID]
-                    )
-                } label: {
-                    Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
-                }
-            }
-
-            if let onDelete {
-                Divider()
-                Button(role: .destructive, action: onDelete) {
-                    Label("Move to Recently Deleted", systemImage: "trash")
+    func body(content: Content) -> some View {
+        content.contextMenu {
+            if !viewModel.isSelectionPicker {
+                let actions = CommandKActionRegistry().actions(for: context)
+                ForEach(actions, id: \.uniqueActionId) { action in
+                    if action.uniqueActionId == actions.first(where: { $0.role == .destructive })?.uniqueActionId { Divider() }
+                    Button(role: action.role == .destructive ? .destructive : nil) {
+                        if let uuid = subject.atomUUID, let excerpt = subject.matchedExcerpt {
+                            CommandKSearchLandingStore.shared.stage(atomUUID: uuid, excerpt: excerpt, query: viewModel.query)
+                        }
+                        viewModel.executeSpaceAction(action.intent)
+                    } label: { Label(action.title, systemImage: action.systemImage) }
+                    .disabled(!action.availability.isEnabled || viewModel.isExecutingAction)
                 }
             }
         }

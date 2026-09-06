@@ -2200,7 +2200,8 @@ final class CommandKSearchPipelineTests: XCTestCase {
         let creationTitles = rows.filter { $0.subtitle.contains("Create") }.map(\.title)
         XCTAssertEqual(
             creationTitles,
-            ["New Task", "New Page", "New Idea", "New Capture", "New Content", "New Swipe", "New Space"]
+            ["New Task", "New Page", "New Idea", "New Capture", "New Content", "New Swipe", "New Space",
+             "New Group", "New Book", "New Course"]
         )
     }
 

@@ -26,6 +26,7 @@ final class FocusCanvasObserverBag {
 /// Supports infinite horizontal panning with recenter functionality
 struct FocusCanvasView: View {
     let entity: EntitySelection
+    private let initialBlockID: UUID?
 
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var database: CosmoDatabase
@@ -58,6 +59,7 @@ struct FocusCanvasView: View {
 
     init(entity: EntitySelection) {
         self.entity = entity
+        initialBlockID = FocusNavigationCoordinator.shared.consumeLandingBlockID(for: entity)
         // Warm path: the coordinator preloaded this atom before presenting,
         // so the real document renders on frame 1 of the entrance — no
         // loading state. The async fetch remains as a cold-path fallback
@@ -248,7 +250,7 @@ struct FocusCanvasView: View {
             ContentFocusModeView(atom: atom, onClose: closeFocusMode)
                 .ignoresSafeArea()
         case .note:
-            NoteFocusModeView(atom: atom, onClose: closeFocusMode)
+            UnifiedPageView(atom: atom, onClose: closeFocusMode, initialBlockID: initialBlockID)
                 .ignoresSafeArea()
         case .cosmoAI:
             CosmoAIFocusModeView(atom: atom, onClose: closeFocusMode)
@@ -549,7 +551,7 @@ struct FocusCanvasView: View {
             loadAtomForFocusMode()
         }
 
-        setupVoiceListeners()
+        if entity.type != .note { setupVoiceListeners() }
     }
 
     private func cleanupFocusMode() {

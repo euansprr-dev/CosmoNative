@@ -706,13 +706,9 @@ struct LibraryTab: View {
 
             if item.kind == .atom {
                 Button {
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.NodeGraph.addToCanvas,
-                        object: nil,
-                        userInfo: ["atomUUID": item.uuid]
-                    )
+                    viewModel.showSpaceDestinationPicker(.add([item.uuid]))
                 } label: {
-                    Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
+                    Label("Add to Space…", systemImage: "folder.badge.plus")
                 }
             }
 

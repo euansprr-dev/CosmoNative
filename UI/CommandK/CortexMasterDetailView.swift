@@ -25,6 +25,7 @@ struct CortexMasterDetailView: View {
         let subject = visibleDetailSubject
 
         VStack(spacing: 0) {
+            if viewModel.isSelectionPicker { CommandKPickerHeader(viewModel: viewModel) }
             HStack(spacing: 0) {
                 CortexResultRail(
                     viewModel: viewModel,
@@ -54,14 +55,16 @@ struct CortexMasterDetailView: View {
             // action bar) stays glass.
             .background(DS.bg.opacity(0.96))
 
-            CortexActionBar(
+            if viewModel.isSelectionPicker {
+                CommandKPickerFooter(viewModel: viewModel)
+            } else { CortexActionBar(
                 viewModel: viewModel,
                 primaryAction: primaryAction,
                 actions: contextualActions,
                 hasSelection: hasSelection,
                 onOpen: { viewModel.openSelected() },
                 onShowActions: showActionPanel
-            )
+            ) }
         }
         .overlay(alignment: .bottomTrailing) {
             if viewModel.isActionPanelPresented {
@@ -77,6 +80,14 @@ struct CortexMasterDetailView: View {
         .onChange(of: detailSubject.renderSignature) { _, _ in syncCachedDetailSubject() }
         .onChange(of: viewModel.selectedNodeId) { _, _ in syncCachedDetailSubject() }
         .task(id: domainLoadKey) { await loadDomainDataIfNeeded() }
+        .task(id: visibleDetailSubject.selectionIdentity) {
+            await viewModel.hydrateSpaceSelection(visibleDetailSubject.atomUUID)
+        }
+        .onChange(of: viewModel.spaceDestinationPicker?.root?.spaceID) { _, _ in actionSearchQuery = "" }
+        .onChange(of: viewModel.isActionPanelPresented) { _, presented in
+            actionSearchQuery = ""
+            if !presented { viewModel.dismissSpaceDestinationPicker() }
+        }
         .onChange(of: domainItemsKey) { _, _ in refreshDomainItems() }
         .onChange(of: domainSelectionIDs) { _, _ in syncDomainNavigation() }
         .onChange(of: viewModel.cortexMode) { _, _ in syncDomainNavigation() }
@@ -87,11 +98,12 @@ struct CortexMasterDetailView: View {
 
     private var actionPanel: some View {
         CommandKActionPanel(
-            title: "Command K Actions",
-            groups: actionGroups,
-            errorMessage: actionErrorMessage,
+            title: viewModel.spaceDestinationPicker == nil ? "Command K Actions" : viewModel.spaceDestinationPickerTitle,
+            groups: viewModel.spaceDestinationPicker == nil ? actionGroups : viewModel.spaceDestinationActions,
+            errorMessage: viewModel.actionStatusMessage ?? actionErrorMessage,
+            emptyMessage: viewModel.spaceDestinationPicker?.isLoading == true ? "Loading destinations…" : "No matching destinations",
             execute: executeContextualAction,
-            dismiss: { viewModel.isActionPanelPresented = false },
+            dismiss: { viewModel.dismissSpaceDestinationPicker() },
             searchQuery: $actionSearchQuery
         )
     }
@@ -131,19 +143,27 @@ struct CortexMasterDetailView: View {
         CommandKActionContext(
             query: viewModel.query,
             subject: visibleDetailSubject,
-            hydratedAtom: nil,
+            hydratedAtom: viewModel.selectedSpaceAtom.flatMap { $0.uuid == visibleDetailSubject.atomUUID ? $0 : nil },
             mode: viewModel.cortexMode,
             activeInquirySessionUUID: nil,
-            activeContentDraftUUID: nil
+            activeContentDraftUUID: nil,
+            spaceContext: viewModel.spaceContext,
+            selectedSpaceInfo: selectedSubjectSpaceInfo,
+            selectedUUIDs: viewModel.selectedUUIDs
         )
     }
 
+    private var selectedSubjectSpaceInfo: CommandKSpaceSearchInfo? {
+        if case .result(let result) = visibleDetailSubject, let info = result.spaceInfo { return info }
+        return viewModel.selectedSpaceAtom?.uuid == visibleDetailSubject.atomUUID ? viewModel.selectedSpaceInfo : nil
+    }
+
     private var contextualActions: [CommandKContextualAction] {
-        CommandKActionRegistry().actions(for: actionContext)
+        viewModel.isSelectionPicker ? [] : CommandKActionRegistry().actions(for: actionContext)
     }
 
     private var actionGroups: [(category: CommandKActionCategory, actions: [CommandKContextualAction])] {
-        CommandKActionRegistry().groupedActions(for: actionContext)
+        viewModel.isSelectionPicker ? [] : CommandKActionRegistry().groupedActions(for: actionContext)
     }
 
     private var primaryAction: CommandKContextualAction? {
@@ -184,6 +204,16 @@ struct CortexMasterDetailView: View {
 
     private func computeDomainItems() -> [CommandKDomainRailItem] {
         guard case .expandedDomain(let tab) = viewModel.cortexMode, isDomainHydrated else { return [] }
+        if let picker = viewModel.selectionPicker {
+            let originals = libraryVM.allItems.map(CommandKDomainRailItem.library)
+            var seen = Set<String>()
+            return originals.filter { item in
+                guard let uuid = item.atomUUID, let type = item.atomType,
+                      ![AtomType.thinkspace, .deepDive, .inquirySession].contains(type),
+                      seen.insert(uuid).inserted else { return false }
+                return picker.includesInScope(uuid)
+            }
+        }
         return CommandKDomainRailDataSource.items(
             for: tab,
             query: viewModel.domainFilterQuery,
@@ -228,6 +258,7 @@ struct CortexMasterDetailView: View {
         guard case .expandedDomain = viewModel.cortexMode else { return "none" }
         return [
             domainLoadKey,
+            "\(viewModel.selectionPicker?.request.id.uuidString ?? "regular")-\(viewModel.selectionPicker?.scope.rawValue ?? "")-\(viewModel.selectionPicker?.isLoading == true)",
             viewModel.domainFilterQuery,
             "\(libraryVM.allItems.count)-\(libraryVM.displayItems.count)-\(libraryVM.recentlyDeletedItems.count)",
             "\(libraryVM.isAtHome)-\(libraryVM.showingRecentlyDeleted)",
@@ -265,7 +296,7 @@ struct CortexMasterDetailView: View {
         isLoadingDomain = true
         switch tab {
         case .database:
-            await libraryVM.loadLibrary()
+            await libraryVM.loadLibrary(includingAllOriginals: viewModel.isSelectionPicker)
         case .swipeGallery:
             await viewModel.loadSwipeGallery()
         case .ideas:
@@ -297,26 +328,21 @@ struct CortexMasterDetailView: View {
 
     private func openDomainItem(_ item: CommandKDomainRailItem) {
         selectDomainItem(item)
-        viewModel.openSelected()
+        if !viewModel.isSelectionPicker { viewModel.openSelected() }
     }
 
     private func showActionPanel() {
         guard !contextualActions.isEmpty else { return }
         actionErrorMessage = nil
         actionSearchQuery = ""
+        viewModel.spaceDestinationPicker = nil
         viewModel.isActionPanelPresented = true
     }
 
     private func executeContextualAction(_ action: CommandKContextualAction) {
         guard action.availability.isEnabled else { return }
         actionErrorMessage = nil
-        Task { @MainActor in
-            do {
-                try await CommandKActionExecutor().execute(action.intent)
-                viewModel.isActionPanelPresented = false
-            } catch {
-                actionErrorMessage = error.localizedDescription
-            }
-        }
+        actionSearchQuery = ""
+        viewModel.executeSpaceAction(action.intent)
     }
 }

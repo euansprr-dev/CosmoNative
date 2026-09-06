@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import CryptoKit
+import CoreGraphics
 
 /// Ordered authored pages, mixed groups and local canvases share atom identity.
 /// Every structural command reads current rows inside one writer transaction.
@@ -96,7 +97,8 @@ enum SpaceCompositionService {
 
     @discardableResult
     static func create(kind: SpaceCompositionKind = .page, title: String, in spaceID: String,
-                       parentUUID: String? = nil, body: String = "", groupUUID: String? = nil) async throws -> Atom {
+                       parentUUID: String? = nil, body: String = "", groupUUID: String? = nil,
+                       placingNear: CGPoint? = nil) async throws -> Atom {
         let title = try validTitle(title)
         let result = try await CosmoDatabase.shared.asyncWrite { db -> Mutation in
             try requireSpace(spaceID, db: db)
@@ -114,6 +116,7 @@ enum SpaceCompositionService {
                 metadata.memberUUIDs.append(atom.uuid)
                 try save(group.replacingSpaceComposition(metadata), before: group, change: &change, db: db)
             }
+            if let placingNear { try placeOriginals([atom.uuid], in: spaceID, near: placingNear, change: &change, db: db) }
             change.resultUUID = atom.uuid
             return change
         }
@@ -124,7 +127,7 @@ enum SpaceCompositionService {
     /// Starters are ordinary editable pages. They impose no permanent Space type.
     @discardableResult
     static func createStarter(_ kind: SpaceCompositionKind, title: String? = nil, in spaceID: String,
-                              groupUUID: String? = nil) async throws -> Atom {
+                              groupUUID: String? = nil, placingNear: CGPoint? = nil) async throws -> Atom {
         let name = try validTitle(title ?? "Untitled \(kind.title.lowercased())")
         let templates = starterPages(for: kind)
         let result = try await CosmoDatabase.shared.asyncWrite { db -> Mutation in
@@ -153,6 +156,7 @@ enum SpaceCompositionService {
                 metadata.memberUUIDs.append(root.uuid)
                 try save(group.replacingSpaceComposition(metadata), before: group, change: &change, db: db)
             }
+            if let placingNear { try placeOriginals([root.uuid], in: spaceID, near: placingNear, change: &change, db: db) }
             change.resultUUID = root.uuid
             return change
         }
@@ -218,6 +222,27 @@ enum SpaceCompositionService {
             return change
         }
         await finish(result, title: "Reorder pages")
+    }
+
+    /// Add original objects to this Space without moving any other membership
+    /// or rearranging existing positions. Canvas entry points can place the
+    /// selected originals in the same transaction and undo as membership.
+    static func addOriginals(_ uuids: [String], in spaceID: String, placingNear: CGPoint? = nil) async throws {
+        guard !uuids.isEmpty else { return }
+        let result = try await CosmoDatabase.shared.asyncWrite { db -> Mutation in
+            try requireSpace(spaceID, db: db)
+            var change = Mutation(), visited = Set<String>()
+            for uuid in unique(uuids) {
+                let atom = try requireAtom(uuid, db: db)
+                guard uuid != spaceID, ![AtomType.thinkspace, .deepDive, .inquirySession].contains(atom.type) else {
+                    throw SpaceCompositionError.invalidKind
+                }
+                try addReachableMembership(atom, in: spaceID, visited: &visited, change: &change, db: db)
+            }
+            if let placingNear { try placeOriginals(unique(uuids), in: spaceID, near: placingNear, change: &change, db: db) }
+            return change
+        }
+        await finish(result, title: placingNear == nil ? "Add to Space" : "Place on Space canvas")
     }
 
     static func addMembers(_ uuids: [String], to groupUUID: String, in spaceID: String) async throws {
@@ -300,16 +325,26 @@ enum SpaceCompositionService {
     }
 
     /// A selected batch is one atomic edit and one undo operation.
-    static func attachReferences(_ references: [SpaceCompositionReference], to uuid: String) async throws {
+    static func attachReferences(_ references: [SpaceCompositionReference], to uuid: String,
+                                 in spaceID: String? = nil, expectedKind: SpaceCompositionKind? = nil,
+                                 preserveExisting: Bool = false) async throws {
         guard !references.isEmpty else { return }
         guard Set(references.map(\.id)).count == references.count else { throw SpaceCompositionError.invalidMetadata }
         for reference in references { try reference.validate() }
         let result = try await CosmoDatabase.shared.asyncWrite { db -> Mutation in
+            if let spaceID { try requireSpace(spaceID, db: db); try requireMember(uuid, in: spaceID, db: db) }
             let target = try requireAtom(uuid, db: db)
             var metadata = try metadataForContainer(target)
+            if let expectedKind, metadata.kind != expectedKind { throw SpaceCompositionError.invalidKind }
             for incoming in references {
                 guard incoming.sourceUUID != uuid else { throw SpaceCompositionError.invalidSource }
                 let source = try requireAtom(incoming.sourceUUID, db: db)
+                if let spaceID {
+                    guard source.uuid != spaceID, ![AtomType.thinkspace, .deepDive, .inquirySession].contains(source.type) else {
+                        throw SpaceCompositionError.invalidSource
+                    }
+                }
+                if preserveExisting, metadata.references.contains(where: { $0.id == incoming.id || $0.sourceUUID == incoming.sourceUUID }) { continue }
                 var reference = incoming
                 if reference.sourceTitle == nil { reference.sourceTitle = source.title }
                 if let index = metadata.references.firstIndex(where: { $0.id == reference.id }) {
@@ -696,6 +731,59 @@ enum SpaceCompositionService {
         }
     }
 
+    /// Root records use centre coordinates; nested canvases use top-left points.
+    /// Keeping collision placement here lets both entry points share one layout.
+    nonisolated static func availableCanvasPosition(size: CGSize, near origin: CGPoint, occupied: [CGRect]) throws -> CGPoint {
+        guard origin.x.isFinite, origin.y.isFinite, abs(origin.x) < 1_000_000_000,
+              abs(origin.y) < 1_000_000_000 else { throw SpaceCompositionError.invalidPlacement }
+        func isAvailable(_ point: CGPoint) -> Bool {
+            let rect = CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
+                              width: size.width, height: size.height).insetBy(dx: -24, dy: -24)
+            return !occupied.contains { $0.intersects(rect) }
+        }
+        if isAvailable(origin) { return origin }
+        for ring in 1...40 {
+            for y in -ring...ring {
+                for x in -ring...ring where abs(x) == ring || abs(y) == ring {
+                    let point = CGPoint(x: origin.x + CGFloat(x) * (size.width + 48),
+                                        y: origin.y + CGFloat(y) * (size.height + 48))
+                    if isAvailable(point) { return point }
+                }
+            }
+        }
+        return CGPoint(x: max(origin.x, occupied.map(\.maxX).max() ?? origin.x) + size.width / 2 + 48, y: origin.y)
+    }
+
+    nonisolated private static func placeOriginals(_ uuids: [String], in spaceID: String, near origin: CGPoint,
+                                                   change: inout Mutation, db: Database) throws {
+        let rows = try CanvasBlockRecord.filter(Column("thinkspace_id") == spaceID)
+            .filter(Column("document_type") == "home").filter(Column("document_id") == 0)
+            .filter(Column("is_deleted") == false).order(Column("id")).fetchAll(db)
+        func bounds(_ row: CanvasBlockRecord) -> CGRect {
+            let width = CGFloat(max(1, row.width ?? 320)), height = CGFloat(max(1, row.height ?? 240))
+            return CGRect(x: CGFloat(row.positionX) - width / 2, y: CGFloat(row.positionY) - height / 2,
+                          width: width, height: height)
+        }
+        var occupied = rows.filter { $0.isPlaced != false }.map(bounds)
+        for uuid in uuids {
+            let matching = rows.filter { $0.entityUuid == uuid }
+            guard !matching.contains(where: { $0.isPlaced != false }), var row = matching.first else { continue }
+            let old = row
+            let point = try availableCanvasPosition(size: bounds(row).size, near: origin, occupied: occupied)
+            row.positionX = Int(point.x.rounded()); row.positionY = Int(point.y.rounded()); row.isPlaced = true
+            row.localVersion = (row.localVersion ?? 0) + 1
+            row.localPending = 1; row.updatedAt = ISO8601.string(from: Date())
+            try row.update(db)
+            // Newly inserted/restored membership is already part of this receipt.
+            if let index = change.membershipAfter.firstIndex(where: { $0.id == row.id }) {
+                change.membershipAfter[index] = row
+            } else {
+                change.membershipBefore.append(old); change.membershipAfter.append(row)
+            }
+            occupied.append(bounds(row))
+        }
+    }
+
     nonisolated private static func addReachableMembership(_ atom: Atom, in spaceID: String, visited: inout Set<String>,
                                                          change: inout Mutation, db: Database) throws {
         guard visited.insert(atom.uuid).inserted else { return }
@@ -795,6 +883,21 @@ enum SpaceCompositionService {
                     let expectedDeleted = undo ? after.isDeleted : (before?.isDeleted ?? true)
                     guard fresh.isDeleted == expectedDeleted else { throw SpaceCompositionError.conflict }
                     result.membershipBefore.append(fresh)
+                    // Restore placement fields only when this command owned them.
+                    // A later canvas rearrangement must never be overwritten by Undo.
+                    if let before {
+                        let expected = undo ? after : before, target = undo ? before : after
+                        if before.isPlaced != after.isPlaced {
+                            guard fresh.isPlaced == expected.isPlaced else { throw SpaceCompositionError.conflict }
+                            fresh.isPlaced = target.isPlaced
+                        }
+                        if before.positionX != after.positionX || before.positionY != after.positionY {
+                            guard fresh.positionX == expected.positionX, fresh.positionY == expected.positionY else {
+                                throw SpaceCompositionError.conflict
+                            }
+                            fresh.positionX = target.positionX; fresh.positionY = target.positionY
+                        }
+                    }
                     fresh.isDeleted = undo ? (before?.isDeleted ?? true) : after.isDeleted
                     fresh.localPending = 1
                     fresh.localVersion = (fresh.localVersion ?? 0) + 1

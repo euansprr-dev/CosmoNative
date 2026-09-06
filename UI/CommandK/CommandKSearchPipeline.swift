@@ -9,6 +9,9 @@ enum CommandKActionKind: String, Equatable {
     case createIdea
     case createTask
     case createNote
+    case createGroup
+    case createBook
+    case createCourse
     case captureResearch
     case createContent
     case createThinkspace
@@ -20,6 +23,7 @@ enum CommandKActionKind: String, Equatable {
     case openDomain
     case openAtom
     case openThinkspace
+    case openSpaceMap
     case savedSearch
     case openApp
     case openCosmoPane
@@ -92,12 +96,12 @@ struct CommandKAction: Identifiable, Equatable {
             components = [kind.rawValue, payload.destinationName]
         case .createIdea:
             components = [kind.rawValue, payload.clientName]
-        case .createTask, .createNote, .createContent, .createThinkspace, .captureInbox, .askCosmo, .askCortex:
+        case .createTask, .createNote, .createGroup, .createBook, .createCourse, .createContent, .createThinkspace, .captureInbox, .askCosmo, .askCortex:
             components = [kind.rawValue]
         case .calculator:
             // One stable id: the card keeps selection while the sum grows.
             components = [kind.rawValue]
-        case .navigateCommandCenter, .navigateLastThinkspace, .openSwipeGallery, .openCosmoPane, .openCosmoWindow:
+        case .navigateCommandCenter, .navigateLastThinkspace, .openSpaceMap, .openSwipeGallery, .openCosmoPane, .openCosmoWindow:
             components = [kind.rawValue]
         case .openBrowser:
             components = [kind.rawValue]
@@ -134,6 +138,8 @@ struct CommandKAction: Identifiable, Equatable {
             return "command-center"
         case .navigateLastThinkspace:
             return "last-thinkspace"
+        case .openSpaceMap:
+            return "space-map|" + (payload.thinkspaceID ?? "current")
         case .openThinkspace:
             return payload.thinkspaceID.map { "thinkspace|\($0)" }
         case .openAtom:
@@ -167,11 +173,11 @@ struct CommandKAction: Identifiable, Equatable {
             return payload.destinationName != nil && payload.body?.isEmpty == false
         case .createCaptureLane:
             return payload.destinationName != nil
-        case .createIdea, .createTask, .createNote, .captureResearch, .createContent, .createThinkspace:
+        case .createIdea, .createTask, .createNote, .createGroup, .createBook, .createCourse, .captureResearch, .createContent, .createThinkspace:
             return payload.title?.isEmpty == false || payload.body?.isEmpty == false || payload.url != nil
         case .captureInbox:
             return payload.body?.isEmpty == false
-        case .navigateCommandCenter, .navigateLastThinkspace, .openBrowser, .openSwipeGallery, .openDomain:
+        case .navigateCommandCenter, .navigateLastThinkspace, .openSpaceMap, .openBrowser, .openSwipeGallery, .openDomain:
             return true
         case .openAtom:
             return payload.atomUUID?.isEmpty == false
@@ -247,6 +253,11 @@ struct CommandKVisualIdentity: Equatable {
             return atom(type: .task)
         case .createNote:
             return atom(type: .note)
+        case .createGroup, .createBook, .createCourse:
+            let kind: SpaceCompositionKind = action.kind == .createGroup ? .group : action.kind == .createBook ? .book : .course
+            return composition(kind)
+        case .openSpaceMap:
+            return CommandKVisualIdentity(style: .thinkspace, symbolName: "point.3.connected.trianglepath.dotted", title: "Space map", subtitle: "Concepts and their connections", badge: "MAP")
         case .createContent:
             return atom(type: .content)
         case .captureInbox:
@@ -261,7 +272,7 @@ struct CommandKVisualIdentity: Equatable {
             return CommandKVisualIdentity(
                 style: .thinkspace,
                 icon: .space,
-                title: "Thinkspace",
+                title: "Space",
                 subtitle: "Canvas workspace",
                 badge: "SPACE"
             )
@@ -350,8 +361,8 @@ struct CommandKVisualIdentity: Equatable {
             return CommandKVisualIdentity(
                 style: .thinkspace,
                 icon: .space,
-                title: "Thinkspace",
-                subtitle: result.subtitle ?? "Canvas workspace",
+                title: "Space",
+                subtitle: result.subtitle ?? "Collect, think, and create",
                 badge: "SPACE"
             )
         case .readwise:
@@ -363,6 +374,7 @@ struct CommandKVisualIdentity: Equatable {
                 badge: "BOOK"
             )
         case .atom, .project:
+            if let kind = result.spaceInfo?.kind { return composition(kind) }
             if result.source == .swipes {
                 return CommandKVisualIdentity(
                     style: .swipeFile,
@@ -383,6 +395,11 @@ struct CommandKVisualIdentity: Equatable {
                 badge: "OPEN"
             )
         }
+    }
+
+    static func composition(_ kind: SpaceCompositionKind) -> CommandKVisualIdentity {
+        CommandKVisualIdentity(style: .document, symbolName: kind.symbol, title: kind.title,
+            subtitle: kind == .group ? "A collection of originals" : "Authored work", badge: kind.title.uppercased())
     }
 
     static func atom(type: AtomType) -> CommandKVisualIdentity {
@@ -459,7 +476,13 @@ enum CommandKActionParser {
         ("idea:", .createIdea, "Create idea", "lightbulb"),
         ("research:", .captureResearch, "Capture research", "doc.text.magnifyingglass"),
         ("content:", .createContent, "Create content", "doc.richtext"),
-        ("thinkspace:", .createThinkspace, "Create Thinkspace", "rectangle.3.group")
+        ("thinkspace:", .createThinkspace, "Create Space", "rectangle.3.group"),
+        ("space:", .createThinkspace, "Create Space", "folder"),
+        ("page:", .createNote, "Create Page", "doc.text"),
+        ("note:", .createNote, "Create Page", "doc.text"),
+        ("group:", .createGroup, "Create Group", "square.stack.3d.up"),
+        ("book:", .createBook, "Create Book", "book.closed"),
+        ("course:", .createCourse, "Create Course", "play.rectangle.on.rectangle")
     ]
 
     private static let reservedLanePrefixes: Set<String> = [
@@ -483,7 +506,7 @@ enum CommandKActionParser {
         "current",
         "current inquiry",
         "inquiry",
-        "thinkspace"
+        "thinkspace", "space", "group", "book", "course"
     ]
 
     private static let captureSignals = [
@@ -623,11 +646,15 @@ enum CommandKActionParser {
                 icon: "command.circle.fill",
                 payload: CommandKActionPayload(rawText: text)
             )
-        case "thinkspace", "canvas", "last thinkspace":
+        case "map", "space map", "open map", "open space map":
+            return CommandKAction(kind: .openSpaceMap, title: "Open Space map",
+                subtitle: "Explore the concepts in a Space", icon: "point.3.connected.trianglepath.dotted",
+                payload: CommandKActionPayload(rawText: text))
+        case "thinkspace", "canvas", "last thinkspace", "open space":
             return CommandKAction(
                 kind: .navigateLastThinkspace,
-                title: "Go to Thinkspace",
-                subtitle: "Open the last-used canvas",
+                title: "Open Space",
+                subtitle: "Open this Space or choose a destination",
                 icon: "rectangle.3.group.fill",
                 payload: CommandKActionPayload(rawText: text)
             )
@@ -777,6 +804,10 @@ enum CommandKActionParser {
         static let all: [BareCreationShape] = [
             BareCreationShape(kind: .createTask, keywords: ["task", "todo"], title: "Create task", icon: "checkmark.circle", prefillsBody: false),
             BareCreationShape(kind: .createNote, keywords: ["page", "note"], title: "Create page", icon: "doc.text", prefillsBody: false),
+            BareCreationShape(kind: .createGroup, keywords: ["group"], title: "Create Group", icon: "square.stack.3d.up", prefillsBody: false),
+            BareCreationShape(kind: .createBook, keywords: ["book"], title: "Create Book", icon: "book.closed", prefillsBody: false),
+            BareCreationShape(kind: .createCourse, keywords: ["course"], title: "Create Course", icon: "play.rectangle.on.rectangle", prefillsBody: false),
+            BareCreationShape(kind: .createThinkspace, keywords: ["space", "thinkspace"], title: "Create Space", icon: "folder", prefillsBody: false),
             // Bare "idea" only — "idea <text>" is the scoped client-capture
             // grammar (parseScopedIdeaCapture claims it first).
             BareCreationShape(kind: .createIdea, keywords: ["idea"], title: "Create idea", icon: "lightbulb", prefillsBody: false),

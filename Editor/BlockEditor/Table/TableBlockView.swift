@@ -50,7 +50,7 @@ struct TableBlockView: View {
 
     var body: some View {
         canvas
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .background(widthReader)
             .onHover { isHovered = $0 }
             .onAppear { focusCoordinator.register(block.id) }

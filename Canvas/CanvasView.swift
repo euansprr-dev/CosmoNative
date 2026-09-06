@@ -372,6 +372,7 @@ struct CanvasView: View {
     @State private var canvasContentOpacity: Double = 1.0
     @State private var canvasContentScale: CGFloat = 1.0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.pageFocusPresentation) private var pageFocusPresentation
 
     // PERF: Debounced frame tracker update — only needed for right-click hit testing
     @State private var frameUpdateTask: Task<Void, Never>?
@@ -402,8 +403,7 @@ struct CanvasView: View {
     @State private var libraryChrome = ThinkspaceLibraryChromeModel()
     @State private var deepDiveChrome = DeepDiveStudyChromeModel()
     @State private var materialsStore = SpaceMaterialsStore()
-    @State private var showingMaterialPicker = false
-    @State private var creatingSpaceItem: SpaceCompositionKind?
+    @State private var creatingSpaceItem: SpaceWorkspaceCreationRequest?
     @State private var libraryInventory: [ChildDoc] = []
     @State private var libraryLoadTask: Task<Void, Never>?
     /// Library folder currently open — hoisted here so the navigation trail
@@ -640,7 +640,12 @@ struct CanvasView: View {
             }
             // The space chrome row — last overlay, so it is frontmost.
             .overlay(alignment: .top) {
-                if compositionSession == nil { spaceChromeRow }
+                if compositionSession == nil {
+                    spaceChromeRow
+                        .opacity(pageFocusPresentation?.isFocused == true ? 0 : 1)
+                        .allowsHitTesting(pageFocusPresentation?.isFocused != true)
+                        .accessibilityHidden(pageFocusPresentation?.isFocused == true)
+                }
             }
             // Thinkspace sidebar trigger + overlay disabled — UnifiedSidebar + peek rail handle navigation
             // PERF: Debounced frame tracker updates — only needed for right-click hit testing,
@@ -741,16 +746,8 @@ struct CanvasView: View {
             },
             availableWidth: canvasSize.width
         )
-        .sheet(isPresented: $showingMaterialPicker) {
-            if let thinkspaceId {
-                if let target = SpaceWorkspaceStore.shared.selectedItem(in: thinkspaceId) {
-                    SpaceWorkspaceItemPicker(spaceID: thinkspaceId, target: target,
-                        purpose: target.spaceCompositionKind == .group ? .members : .references)
-                } else { SpaceMaterialPicker(spaceID: thinkspaceId) }
-            }
-        }
-        .sheet(item: $creatingSpaceItem) { kind in
-            if let thinkspaceId { SpaceWorkspaceCreateSheet(spaceID: thinkspaceId, kind: kind) }
+        .sheet(item: $creatingSpaceItem) { request in
+            SpaceWorkspaceCreateSheet(spaceID: request.spaceID, kind: request.kind, placingNear: request.placingNear)
         }
 
     }
@@ -825,15 +822,57 @@ struct CanvasView: View {
         )
     }
 
-    /// ＋ from the chrome row: create at the camera centre (canvas), or the
-    /// same creation without a position for the other views — the block
-    /// still lands on this space's canvas, the library shows it at once.
+    private func presentExistingItemPicker() {
+        let origin = viewportCenterCanvasPoint()
+        if let session = compositionSession {
+            CommandKPickerPresentation.present(spaceID: session.spaceID, targetUUID: session.containerUUID,
+                purpose: .placeOnCanvas, alreadyIncludedUUIDs: Set(session.projectedBlocks().map(\.entityUuid)),
+                onConfirm: { ids in try await session.addExisting(ids, near: origin) })
+        } else if let spaceID = thinkspaceId {
+            if let target = SpaceWorkspaceStore.shared.selectedItem(in: spaceID) {
+                if SpaceWorkspaceStore.shared.location(spaceID).view == .canvas {
+                    SpaceCompositionCanvasStore.session(spaceID: spaceID, containerUUID: target.uuid).presentExistingPicker()
+                } else {
+                    CommandKPickerPresentation.present(spaceID: spaceID, targetUUID: target.uuid,
+                        purpose: target.spaceCompositionKind == .group ? .addOriginals : .attachReferences)
+                }
+            } else if isCanvasViewActive {
+                CommandKPickerPresentation.present(spaceID: spaceID, purpose: .placeOnCanvas,
+                    alreadyIncludedUUIDs: Set(spatialEngine.blocks.map(\.entityUuid)),
+                    onConfirm: { ids in try await SpaceCompositionService.addOriginals(ids, in: spaceID, placingNear: origin) })
+            } else {
+                CommandKPickerPresentation.present(spaceID: spaceID)
+            }
+        }
+    }
+
+    private func consumeCanvasReveal() {
+        guard compositionSession == nil, isCanvasViewActive, let spaceID = thinkspaceId,
+              spatialEngine.currentThinkspaceId == spaceID,
+              let uuid = SpaceWorkspaceCanvasNavigation.shared.pendingUUIDs[spaceID],
+              spatialEngine.blocks.contains(where: { $0.entityUuid == uuid }) else { return }
+        SpaceWorkspaceCanvasNavigation.shared.consume(in: spaceID)
+        flyCameraToBlock(atomUUID: uuid)
+    }
+
+    private var canvasRevealObserver: some View {
+        Color.clear.frame(width: 0, height: 0)
+            .onAppear { consumeCanvasReveal() }
+            .onChange(of: SpaceWorkspaceCanvasNavigation.shared.pendingUUIDs) { _, _ in consumeCanvasReveal() }
+            .onChange(of: spatialEngine.blocks.map(\.entityUuid)) { _, _ in consumeCanvasReveal() }
+            .onChange(of: isCanvasViewActive) { _, active in if active { consumeCanvasReveal() } }
+    }
+
+    /// Canvas creation captures a position; the other Space views add membership.
     private func addFromChromeRow(_ kind: SpaceAddKind) {
         switch kind {
         case .existing:
-            showingMaterialPicker = true
+            presentExistingItemPicker()
         case .group:
-            creatingSpaceItem = .group
+            if let thinkspaceId {
+                creatingSpaceItem = .init(spaceID: thinkspaceId, kind: .group,
+                    placingNear: isCanvasViewActive ? viewportCenterCanvasPoint() : nil)
+            }
         case .file:
             presentFilePortalOpenPanel(at: viewportCenterCanvasPoint())
         case .question:
@@ -1235,14 +1274,7 @@ struct CanvasView: View {
                 onOpenFocusMode: { uuid in
                     if let block = spatialEngine.blocks.first(where: { $0.entityUuid == uuid }),
                        block.entityId > 0 {
-                        NotificationCenter.default.post(
-                            name: .enterFocusMode,
-                            object: nil,
-                            userInfo: [
-                                "type": block.entityType,
-                                "id": block.entityId
-                            ]
-                        )
+                        openBlockInFocusMode(block)
                     }
                 },
                 onMagnify: { magnification in
@@ -1770,7 +1802,13 @@ struct CanvasView: View {
     }
 
     private func rememberCurrentSessionViewport(for thinkspaceId: String? = nil) {
-        if compositionSession != nil { saveScopedViewport(); return }
+        if let compositionSession {
+            compositionSession.insertionOrigin = viewportCenterCanvasPoint()
+            saveScopedViewport(); return
+        }
+        if let id = thinkspaceId ?? spatialEngine.currentThinkspaceId ?? self.thinkspaceId {
+            SpaceWorkspaceCanvasNavigation.shared.remember(origin: viewportCenterCanvasPoint(), in: id)
+        }
         CanvasSessionViewportStore.shared.remember(
             CanvasSessionViewportState(zoomLevel: canvasScale, panOffset: canvasOffset),
             for: thinkspaceId ?? spatialEngine.currentThinkspaceId ?? self.thinkspaceId
@@ -1970,13 +2008,9 @@ struct CanvasView: View {
         if compositionSession == nil {
             canvasContent.cosmoSurfaceKeyWindowActivation(
                 surfaceID: ThinkspaceEditableSurface.surfaceID(forThinkspaceId: resolvedThinkspaceSurfaceId))
+                .background(canvasRevealObserver)
         } else {
-            canvasContent.sheet(isPresented: $showingMaterialPicker) {
-                if let compositionSession, let atom = compositionSession.container {
-                    SpaceWorkspaceItemPicker(spaceID: compositionSession.spaceID, target: atom,
-                        purpose: atom.spaceCompositionKind == .group ? .members : .references)
-                }
-            }
+            canvasContent
         }
     }
 
@@ -2574,25 +2608,6 @@ struct CanvasView: View {
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handlePlaceEntityOnCanvas(notification: notification)
-                }
-
-                addCanvasObserver(
-                    forName: Notification.Name("com.cosmo.space.placeCreatedItem"),
-                    object: nil, queue: .main, activeOnly: true
-                ) { [self] notification in
-                    guard let uuid = notification.userInfo?["atomUUID"] as? String,
-                          let destination = notification.userInfo?["spaceID"] as? String,
-                          destination == thinkspaceId,
-                          destination == spatialEngine.currentThinkspaceId else { return }
-                    let position = PositionResolver.shared.findNonOverlappingPosition(
-                        near: viewportCenterCanvasPoint(), existingBlocks: spatialEngine.blocks, canvasSize: canvasSize)
-                    Task { @MainActor in
-                        guard await spatialEngine.placeMember(entityUuid: uuid, at: position) != nil else {
-                            SpaceWorkspaceStore.shared.report(SpaceCompositionError.invalidPlacement, in: destination)
-                            return
-                        }
-                        refreshLibraryInventory()
-                    }
                 }
 
                 addCanvasObserver(
@@ -5004,10 +5019,7 @@ struct CanvasView: View {
     private func flyCameraToBlock(atomUUID: String) {
         guard let block = spatialEngine.blocks.first(where: { $0.entityUuid == atomUUID }) else { return }
 
-        let blockCenter = CGPoint(
-            x: block.position.x + block.size.width / 2,
-            y: block.position.y + block.size.height / 2
-        )
+        let blockCenter = block.position
 
         // Frame at a readable zoom: keep the current scale when it's already
         // comfortable, otherwise settle at 1.0.
@@ -5042,9 +5054,23 @@ struct CanvasView: View {
             compositionSession.open(atom); return
         }
         AppPerformanceInstrumentation.trace("CANVAS openBlockInFocusMode \(block.entityType.rawValue)#\(block.entityId)")
-        if block.entityType == .note, let thinkspaceId,
-           let atom = SpaceWorkspaceStore.shared.snapshots[thinkspaceId]?.atomsByUUID[block.entityUuid] {
-            SpaceWorkspaceStore.shared.open(atom, in: thinkspaceId)
+        if block.entityType == .note {
+            if let thinkspaceId, let atom = SpaceWorkspaceStore.shared.snapshots[thinkspaceId]?.atomsByUUID[block.entityUuid] {
+                SpaceWorkspaceStore.shared.open(atom, in: thinkspaceId)
+            } else {
+                Task { @MainActor in
+                    do {
+                        guard let atom = try await AtomRepository.shared.fetch(uuid: block.entityUuid) else { return }
+                        if let thinkspaceId {
+                            try await SpaceWorkspaceStore.shared.openOriginal(atom, from: thinkspaceId)
+                        } else {
+                            FocusNavigationCoordinator.shared.open(atomUUID: atom.uuid)
+                        }
+                    } catch {
+                        if let thinkspaceId { SpaceWorkspaceStore.shared.report(error, in: thinkspaceId) }
+                    }
+                }
+            }
             return
         }
         guard [.idea, .content, .research, .connection, .cosmoAI].contains(block.entityType) else {
@@ -5489,16 +5515,7 @@ struct CanvasView: View {
             return
         }
 
-        if compositionSession != nil { openBlockInFocusMode(block); return }
-
-        // Only applicable types can enter focus mode
-        if [.idea, .content, .research, .connection].contains(block.entityType) {
-            NotificationCenter.default.post(
-                name: .enterFocusMode,
-                object: nil,
-                userInfo: ["type": block.entityType, "id": block.entityId]
-            )
-        }
+        openBlockInFocusMode(block)
     }
 
     // MARK: - Smart Block Reference Handlers (by ID)

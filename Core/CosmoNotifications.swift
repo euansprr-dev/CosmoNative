@@ -1053,16 +1053,27 @@ final class AtomRestoreAdopterRegistry {
     static let shared = AtomRestoreAdopterRegistry()
 
     private var adopters: [String: (Atom) -> Void] = [:]
+    private var preparers: [String: @MainActor () async -> Bool] = [:]
 
     private init() {}
 
     /// `uuid` is the atom the editor currently holds open.
-    func register(uuid: String, adopt: @escaping (Atom) -> Void) {
+    func register(uuid: String, prepare: (@MainActor () async -> Bool)? = nil,
+                  adopt: @escaping (Atom) -> Void) {
         adopters[uuid] = adopt
+        preparers[uuid] = prepare
+    }
+
+    /// Await the editor's durable save before history replaces its content.
+    /// Legacy adopters keep their existing synchronous flush contract.
+    func prepare(uuid: String) async -> Bool {
+        guard let prepare = preparers[uuid] else { return true }
+        return await prepare()
     }
 
     func unregister(uuid: String) {
         adopters.removeValue(forKey: uuid)
+        preparers.removeValue(forKey: uuid)
     }
 
     func canAdopt(uuid: String) -> Bool {

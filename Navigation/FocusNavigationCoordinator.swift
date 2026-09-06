@@ -16,10 +16,12 @@ final class FocusNavigationCoordinator {
 
     /// Wired once by MainView on appear.
     weak var appState: AppState?
+    weak var pageFocusPresentation: PageFocusPresentation?
 
     /// Atoms fetched ahead of presentation; FocusCanvasView consumes them
     /// synchronously on first mount so the warm path never shows a loader.
     private var preloadedAtoms: [EntitySelection: Atom] = [:]
+    private var landingBlockIDs: [EntitySelection: UUID] = [:]
 
     /// Window-relative unit point the entrance grows from. Falls back to the
     /// pointer location for mouse-triggered opens, `.center` for keyboard ones.
@@ -81,7 +83,7 @@ final class FocusNavigationCoordinator {
         }
     }
 
-    func open(atomUUID: String, sourceFrame: CGRect? = nil) {
+    func open(atomUUID: String, sourceFrame: CGRect? = nil, landingBlockID: UUID? = nil) {
         openTask?.cancel()
         let request = UUID()
         requestID = request
@@ -97,6 +99,7 @@ final class FocusNavigationCoordinator {
 
             let target = EntitySelection(id: atomId, type: AtomWindowViewModel.entityType(for: atom.type))
             preloadedAtoms[target] = atom
+            landingBlockIDs[target] = landingBlockID
             present(target, anchor: anchor)
         }
     }
@@ -104,6 +107,7 @@ final class FocusNavigationCoordinator {
     // MARK: - Close
 
     func close() {
+        pageFocusPresentation?.exit()
         openTask?.cancel()
         guard let appState, appState.focusedEntity != nil else { return }
         AppPerformanceInstrumentation.event("focus-close")
@@ -111,6 +115,7 @@ final class FocusNavigationCoordinator {
             appState.focusedEntity = nil
         }
         preloadedAtoms.removeAll()
+        landingBlockIDs.removeAll()
     }
 
     /// FocusCanvasView pulls its atom here on first mount — synchronously,
@@ -119,10 +124,15 @@ final class FocusNavigationCoordinator {
         preloadedAtoms.removeValue(forKey: entity)
     }
 
+    func consumeLandingBlockID(for entity: EntitySelection) -> UUID? {
+        landingBlockIDs.removeValue(forKey: entity)
+    }
+
     // MARK: - Presentation
 
     private func present(_ entity: EntitySelection, anchor: UnitPoint) {
         guard let appState else { return }
+        pageFocusPresentation?.exit()
         // A space's own Deep Dive has ONE home: the space's Deep Dive view.
         // Every open path (⌘K, portal blocks, trail replay, inquiry exit)
         // funnels through here, so the decision is made once.

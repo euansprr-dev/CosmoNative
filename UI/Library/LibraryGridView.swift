@@ -78,13 +78,11 @@ struct LibraryGridView: View {
                     let uuids = CommandKDragSession.Payload.uuids(fromDropped: dropped)
                     guard !uuids.isEmpty else { return false }
                     CommandKDragSession.shared.end()
-                    for uuid in uuids {
-                        NotificationCenter.default.post(
-                            name: CosmoNotification.Canvas.moveAtomToThinkspace,
-                            object: nil,
-                            userInfo: ["atomUUID": uuid, "targetThinkspaceId": item.uuid]
-                        )
-                    }
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Canvas.moveAtomToThinkspace,
+                        object: nil,
+                        userInfo: ["uuids": uuids, "targetThinkspaceId": item.uuid]
+                    )
                     return true
                 } isTargeted: { targeted in
                     withAnimation(ProMotionSprings.snappy) {

@@ -10,6 +10,7 @@ struct PaneContentView: View {
     let onClose: () -> Void
 
     @Environment(\.paneDeckChrome) private var paneDeckChrome
+    @Environment(\.pageFocusPresentation) private var pageFocusPresentation
 
     @State private var loadedAtom: Atom?
 
@@ -20,6 +21,11 @@ struct PaneContentView: View {
             // entity panes while the atom loads, so no pane is ever tab-less.
             if let paneDeckChrome, showsStandaloneDeckChrome {
                 PaneDeckStandaloneChrome(context: paneDeckChrome)
+                    .frame(height: pageFocusPresentation?.isFocused == true ? 0 : nil)
+                    .opacity(pageFocusPresentation?.isFocused == true ? 0 : 1)
+                    .clipped()
+                    .allowsHitTesting(pageFocusPresentation?.isFocused != true)
+                    .accessibilityHidden(pageFocusPresentation?.isFocused == true)
             }
             contentBody
         }
@@ -155,7 +161,7 @@ struct PaneContentView: View {
             ContentFocusModeView(atom: atom, onClose: onClose)
 
         case .note:
-            NoteFocusModeView(atom: atom, onClose: onClose)
+            UnifiedPageView(atom: atom, onClose: onClose)
 
         case .cosmoAI:
             CosmoAIFocusModeView(atom: atom, onClose: onClose)

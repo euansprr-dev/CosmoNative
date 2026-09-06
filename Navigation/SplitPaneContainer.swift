@@ -15,6 +15,8 @@ struct SplitPaneContainer<MainContent: View>: View {
     let paneManager: PaneManager
     let mainContent: MainContent
 
+    @Environment(\.pageFocusPresentation) private var pageFocusPresentation
+
     /// The width the main slot's CONTENT is laid out at — the seat. It follows
     /// the model's target width through a `disablesAnimations` transaction, so
     /// a pane open/close spring only ever animates the clip window around it.
@@ -40,15 +42,27 @@ struct SplitPaneContainer<MainContent: View>: View {
 
     // MARK: - Split Layout
 
+    private var focusedPaneID: String? {
+        guard let id = pageFocusPresentation?.focusedPaneID,
+              paneManager.panes.contains(where: { $0.id == id }) else { return nil }
+        return id
+    }
+
+    private var isPageFocused: Bool { pageFocusPresentation?.isFocused == true }
+
     private func mainTargetWidth(in totalWidth: CGFloat) -> CGFloat {
-        (totalWidth * paneManager.mainSplitRatio).rounded()
+        if isPageFocused { return focusedPaneID == nil ? totalWidth : 0 }
+        return (totalWidth * paneManager.mainSplitRatio).rounded()
     }
 
     @ViewBuilder
     private func splitLayout(geo: GeometryProxy) -> some View {
-        let dividerWidth: CGFloat = paneManager.isActive ? 6 : 0
+        let dividerWidth: CGFloat = paneManager.isActive && !isPageFocused ? 6 : 0
         let mainWidth = mainTargetWidth(in: geo.size.width)
         let paneColumnWidth = max(0, geo.size.width - mainWidth - dividerWidth)
+        let paneIsVisible = paneManager.isActive && (!isPageFocused || focusedPaneID != nil)
+        let paneContentWidth = paneIsVisible ? paneColumnWidth :
+            max(0, geo.size.width * (1 - paneManager.mainSplitRatio) - 6)
 
         HStack(spacing: 0) {
             // LEFT: Main content (always rendered). The inner frame is the
@@ -60,6 +74,9 @@ struct SplitPaneContainer<MainContent: View>: View {
                 .frame(width: seatedMainWidth ?? mainWidth, height: geo.size.height, alignment: .leading)
                 .frame(width: mainWidth, height: geo.size.height, alignment: .leading)
                 .clipped()
+                .opacity(focusedPaneID == nil ? 1 : 0)
+                .allowsHitTesting(focusedPaneID == nil)
+                .accessibilityHidden(focusedPaneID != nil)
 
             // Vertical divider between main and pane column
             if paneManager.isActive {
@@ -70,6 +87,11 @@ struct SplitPaneContainer<MainContent: View>: View {
                 ) { delta in
                     paneManager.updateMainSplit(delta: delta, totalWidth: geo.size.width)
                 }
+                .frame(width: dividerWidth)
+                .clipped()
+                .opacity(isPageFocused ? 0 : 1)
+                .allowsHitTesting(!isPageFocused)
+                .accessibilityHidden(isPageFocused)
             }
 
             // RIGHT: Pane deck. Not seated like the main slot: an animated
@@ -79,7 +101,11 @@ struct SplitPaneContainer<MainContent: View>: View {
             // never resized by a spring while it stays alive.
             if paneManager.isActive {
                 PaneDeckView(paneManager: paneManager)
-                    .frame(width: paneColumnWidth, height: geo.size.height)
+                    .frame(width: paneContentWidth, height: geo.size.height)
+                    .frame(width: paneColumnWidth, height: geo.size.height, alignment: .leading)
+                    .opacity(paneIsVisible ? 1 : 0)
+                    .allowsHitTesting(paneIsVisible)
+                    .accessibilityHidden(!paneIsVisible)
                     .clipped()
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
@@ -89,7 +115,7 @@ struct SplitPaneContainer<MainContent: View>: View {
         // discrete streams (unchanged), and a pane open/close lands the seat
         // in one un-animated layout pass while the clip window springs.
         .onChange(of: mainTargetWidth(in: geo.size.width), initial: true) { _, target in
-            guard seatedMainWidth != target else { return }
+            guard target > 0, seatedMainWidth != target else { return }
             var seat = Transaction()
             seat.disablesAnimations = true
             withTransaction(seat) {
@@ -161,6 +187,7 @@ struct PaneDeckView: View {
     let paneManager: PaneManager
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.pageFocusPresentation) private var pageFocusPresentation
 
     /// The rung of the width ladder each `.tracksSteps` pane is currently laid
     /// out at, held only for the span of a continuous width stream and dropped
@@ -232,7 +259,7 @@ struct PaneDeckView: View {
     }
 
     private func slotRow(layout: DeckLayout) -> some View {
-        let focusedId = paneManager.focusedPaneId ?? paneManager.panes.last?.id
+        let focusedId = pageFocusPresentation?.focusedPaneID ?? paneManager.focusedPaneId ?? paneManager.panes.last?.id
         let payload = deckChromePayload(layout: layout, focusedId: focusedId)
 
         return HStack(spacing: 0) {
@@ -335,9 +362,9 @@ struct PaneDeckView: View {
         }
 
         // There is always exactly one focused pane when panes exist.
-        let focusedId = paneManager.focusedPaneId ?? panes.last!.id
+        let focusedId = pageFocusPresentation?.focusedPaneID ?? paneManager.focusedPaneId ?? panes.last!.id
         var expanded: Set<String> = [focusedId]
-        if let pinned = paneManager.pinnedPaneId,
+        if pageFocusPresentation?.isFocused != true, let pinned = paneManager.pinnedPaneId,
            pinned != focusedId,
            panes.contains(where: { $0.id == pinned }) {
             expanded.insert(pinned)
@@ -472,6 +499,7 @@ private struct PaneSlotView: View {
             onClose: onClose
         )
         .environment(\.paneDeckChrome, deckChrome)
+        .environment(\.pageFocusPaneID, pane.id)
         // Collapsed panes stay mounted (state survives), but continuous work
         // — media playback, per-token scrolls, periodic timelines — consults
         // this to go quiet while off-slot. Pinned panes are expanded.

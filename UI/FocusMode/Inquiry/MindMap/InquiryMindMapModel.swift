@@ -16,6 +16,8 @@ struct MindMapNode: Identifiable, Hashable {
         case question          // Satellite under its concept (or session-tree branch)
         case subQuestion
         case questionGroup     // "Open questions" bucket / "+N more" overflow
+        case page              // Authored Space Page, with its own containment
+        case material          // A source or work linked to the Space
     }
     var id: String
     var kind: Kind
@@ -420,6 +422,8 @@ enum MindMapBuilder {
             partial[connection.uuid] = Set(key.split(separator: " ").map(String.init))
         }
         for connection in connections where parentByUUID[connection.uuid] == nil {
+            // An explicit top-level choice must survive legacy title heuristics.
+            if connection.metadataValue(as: ConnectionHierarchyMetadata.self)?.parentPinnedByUser == true { continue }
             guard let ownTokens = tokensByUUID[connection.uuid], ownTokens.count >= 2 else { continue }
             let candidates = connections.filter { other in
                 guard other.uuid != connection.uuid,

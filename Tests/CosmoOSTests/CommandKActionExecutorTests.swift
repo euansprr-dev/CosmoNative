@@ -69,7 +69,7 @@ final class CommandKActionExecutorTests: XCTestCase {
     }
 
     @MainActor
-    func testAddToCanvasIntentClosesCommandK() async throws {
+    func testAddToCanvasIntentWaitsForMutationBeforeDismissal() async throws {
         let addRecorder = NotificationRecorder(name: CosmoNotification.NodeGraph.addToCanvas)
         let closeRecorder = NotificationRecorder(name: CosmoNotification.NodeGraph.closeCommandK)
         let executor = CommandKActionExecutor()
@@ -77,7 +77,7 @@ final class CommandKActionExecutorTests: XCTestCase {
         try await executor.execute(.addToCanvas(uuid: "atom-1"))
 
         XCTAssertEqual(addRecorder.notifications.count, 1)
-        XCTAssertEqual(closeRecorder.notifications.count, 1)
+        XCTAssertEqual(closeRecorder.notifications.count, 0)
     }
 
     @MainActor

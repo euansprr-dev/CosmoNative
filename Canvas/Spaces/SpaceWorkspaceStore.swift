@@ -99,18 +99,19 @@ final class SpaceWorkspaceStore {
         if snapshots[spaceID]?.atomsByUUID[atom.uuid] != nil {
             open(atom, in: spaceID, landingBlockID: landingBlockID); return
         }
-        let memberships = try await SpaceCompositionService.reachableSpaceIDs(containing: atom.uuid)
-        for destination in memberships {
-            guard let space = try await AtomRepository.shared.fetch(uuid: destination), !space.isDeleted, let id = space.id else { continue }
-            await load(destination)
-            guard snapshots[destination]?.atomsByUUID[atom.uuid] != nil else { continue }
-            open(atom, in: destination, landingBlockID: landingBlockID)
-            NotificationCenter.default.post(name: .switchToThinkspace, object: nil, userInfo: ["id": id])
+        // Try the known source first. Pages elsewhere can open independently;
+        // containers need their reachable workspace to retain their contents.
+        await load(spaceID)
+        if snapshots[spaceID]?.atomsByUUID[atom.uuid] != nil {
+            open(atom, in: spaceID, landingBlockID: landingBlockID); return
+        }
+        if PageOpenLocationPolicy.requiresSpace(for: atom.spaceCompositionKind) {
+            try await CommandKSpaceService.openAtom(atom.uuid, preferredSpaceID: spaceID,
+                landingBlockID: landingBlockID)
             return
         }
-        // A free-standing note still has its native editor in the Library.
-        if atom.spaceCompositionKind == .page, let id = atom.id, atom.spaceComposition == nil {
-            NotificationCenter.default.post(name: .enterFocusMode, object: nil, userInfo: ["type": EntityType.note, "id": id])
+        if atom.type == .note {
+            FocusNavigationCoordinator.shared.open(atomUUID: atom.uuid, landingBlockID: landingBlockID)
             return
         }
         throw SpaceCompositionError.notFound

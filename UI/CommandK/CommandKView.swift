@@ -333,7 +333,7 @@ public struct CommandKView: View {
     private func searchBarPill(geometry: GeometryProxy) -> some View {
         HStack(spacing: DS.space12) {
             // Back button in expanded mode
-            if case .expandedDomain = viewModel.cortexMode {
+            if case .expandedDomain = viewModel.cortexMode, !viewModel.isSelectionPicker {
                 Button {
                     closeExpandedDomain()
                 } label: {
@@ -382,7 +382,7 @@ public struct CommandKView: View {
                     .background(DS.accent.opacity(0.12), in: Capsule())
             }
 
-            scopeMenu
+            if !viewModel.isSelectionPicker { scopeMenu }
 
             if !searchText.isEmpty {
                 clearQueryButton
@@ -575,6 +575,7 @@ public struct CommandKView: View {
     }
 
     private var searchPlaceholder: String {
+        if viewModel.isSelectionPicker { return "Search for originals…" }
         if case .expandedDomain(let tab) = viewModel.cortexMode {
             return tab.searchPlaceholder
         }
@@ -596,6 +597,7 @@ public struct CommandKView: View {
     // MARK: - Keyboard Handlers
 
     private func handleEscape() -> KeyPress.Result {
+        if viewModel.isSelectionPicker { viewModel.cancelSelectionPicker(); return .handled }
         // Composer focus peels first: Esc steps out of the form back to the
         // search field; the palette stays. Mirrored in MainView's monitor.
         if viewModel.isComposerFocused {
@@ -627,6 +629,11 @@ public struct CommandKView: View {
 
     private func handleCommandReturn(_ press: KeyPress) -> KeyPress.Result {
         guard press.key == .return else { return .ignored }
+        if viewModel.isSelectionPicker {
+            if press.modifiers.contains(.command) { viewModel.confirmPickerSelection() }
+            else { viewModel.toggleCurrentPickerSelection() }
+            return .handled
+        }
         guard !viewModel.isActionPanelPresented else { return .ignored }
         if press.modifiers.contains(.command) {
             openSelectedAsPaneFromShortcut()
@@ -644,6 +651,11 @@ public struct CommandKView: View {
         // field somehow kept focus — otherwise it opens the item underneath.
         guard !viewModel.isActionPanelPresented else { return }
         let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if viewModel.isSelectionPicker {
+            if modifiers.contains(.command) { viewModel.confirmPickerSelection() }
+            else { viewModel.toggleCurrentPickerSelection() }
+            return
+        }
         if modifiers.contains(.command) {
             openSelectedAsPaneFromShortcut()
         } else if modifiers.contains(.option) {
@@ -660,6 +672,7 @@ public struct CommandKView: View {
     }
 
     private func handleTab(_ press: KeyPress) -> KeyPress.Result {
+        if viewModel.isSelectionPicker { return .ignored }
         guard !viewModel.isActionPanelPresented else { return .ignored }
 
         // A visible composer owns Tab: step from the search field into the

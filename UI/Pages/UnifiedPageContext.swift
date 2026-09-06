@@ -27,6 +27,8 @@ struct UnifiedPageContextPanel: View {
             }.padding(DS.space20)
         }
         .scrollEdgeEffectStyle(.soft, for: .vertical)
+        // The companion sits over this panel's tail — content ends above it.
+        .contentMargins(.bottom, CompanionDockMetrics.shared.bottomClearance, for: .scrollContent)
         .background(DS.commandCenterRailStabilizingFill, in: .rect(cornerRadius: 22))
         .cosmoGlassPanel(role: .focusSidebar, cornerRadius: 22)
         .sheet(isPresented: $editingTags) { TagEditorSheet(tags: $tags) }

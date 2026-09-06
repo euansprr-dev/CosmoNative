@@ -401,3 +401,128 @@ private struct NoteRepairOutcome {
     let atomChanged: Bool
     let blockChanged: Bool
 }
+
+
+// MARK: - Durable capture outbox
+
+/// Capture rows and their upload payload commit in the SAME SQLite transaction.
+/// The async tracker is only a delivery kick; quitting before it runs is safe.
+/// Keep this contract identical on Mac and iPhone.
+enum CaptureSyncOutbox {
+    static let tables = ["capture_destinations", "inbox_items", "captured_items", "media_attachments", "capture_requests", "seedlings"]
+
+    struct Snapshot: Sendable {
+        let table: String
+        let uuid: String
+        let data: String
+        let localVersion: Int
+        let serverVersion: Int
+        let isDeleted: Bool
+        var operation: String { serverVersion == 0 ? "INSERT" : "UPDATE" }
+    }
+
+    static func snapshot(_ db: Database, table: String, uuid: String) throws -> Snapshot? {
+        func encode<T: Encodable>(_ record: T?) throws -> Snapshot? {
+            guard let record else { return nil }
+            let data = try JSONEncoder().encode(record)
+            let fields = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            return Snapshot(
+                table: table, uuid: uuid, data: String(decoding: data, as: UTF8.self),
+                localVersion: fields["_local_version"] as? Int ?? 1,
+                serverVersion: fields["_server_version"] as? Int ?? 0,
+                isDeleted: fields["is_deleted"] as? Bool ?? false
+            )
+        }
+        switch table {
+        case "inbox_items": return try encode(InboxItem.filter(Column("uuid") == uuid).fetchOne(db))
+        case "captured_items": return try encode(CapturedItem.filter(Column("uuid") == uuid).fetchOne(db))
+        case "capture_destinations": return try encode(CaptureDestination.filter(Column("uuid") == uuid).fetchOne(db))
+        case "media_attachments": return try encode(MediaAttachment.filter(Column("uuid") == uuid).fetchOne(db))
+        case "capture_requests": return try encode(CaptureRequest.filter(Column("uuid") == uuid).fetchOne(db))
+        case "seedlings": return try encode(Seedling.filter(Column("uuid") == uuid).fetchOne(db))
+        default: return nil
+        }
+    }
+
+    @discardableResult
+    static func enqueue(_ db: Database, table: String, uuid: String) throws -> Snapshot? {
+        guard let current = try snapshot(db, table: table, uuid: uuid) else { return nil }
+        try db.execute(sql: "UPDATE \(table) SET _local_pending = 1 WHERE uuid = ?", arguments: [uuid])
+        let existing = try Row.fetchOne(
+            db, sql: "SELECT id, local_version FROM sync_queue WHERE table_name = ? AND uuid = ? AND status = 'pending' ORDER BY local_version DESC LIMIT 1",
+            arguments: [table, uuid]
+        )
+        if let id = existing?["id"] as Int64? {
+            // A delayed delegate must never relabel an older payload with a
+            // newer version. Always encode the current row inside this write.
+            guard (existing?["local_version"] as Int? ?? 0) <= current.localVersion else { return nil }
+            try db.execute(sql: """
+                UPDATE sync_queue
+                SET operation = ?, data = ?,
+                    retry_count = CASE WHEN local_version < ? THEN 0 ELSE retry_count END,
+                    error_message = CASE WHEN local_version < ? THEN NULL ELSE error_message END,
+                    local_version = ?, created_at = ?
+                WHERE id = ?
+                """, arguments: [current.operation, current.data, current.localVersion, current.localVersion,
+                                  current.localVersion, Int64(Date().timeIntervalSince1970 * 1000), id])
+        } else {
+            try db.execute(sql: """
+                INSERT INTO sync_queue (uuid, table_name, operation, data, local_version, status)
+                VALUES (?, ?, ?, ?, ?, 'pending')
+                """, arguments: [uuid, table, current.operation, current.data, current.localVersion])
+        }
+        return current
+    }
+
+    /// Recover older captures saved before their async tracker ran. Failed or
+    /// dead-lettered uploads retain their existing retry/review policy.
+    static func reconcileUnqueued(_ db: Database) throws -> Int {
+        var count = 0
+        for table in tables where try db.tableExists(table) {
+            let uuids = try String.fetchAll(db, sql: """
+                SELECT uuid FROM \(table) AS capture
+                WHERE (_server_version = 0 OR _local_version > _server_version OR _local_pending = 1)
+                  AND NOT EXISTS (
+                    SELECT 1 FROM sync_queue AS q
+                    WHERE q.table_name = ? AND q.uuid = capture.uuid
+                      AND q.status IN ('pending', 'failed', 'abandoned')
+                  )
+                """, arguments: [table])
+            for uuid in uuids {
+                if try enqueue(db, table: table, uuid: uuid) != nil { count += 1 }
+            }
+        }
+        return count
+    }
+
+    /// The old UPDATE-before-first-upload bug left a false success receipt.
+    /// Return today's local row, NEVER replay the potentially stale receipt.
+    static func falseAcknowledgementCandidates(_ db: Database) throws -> [Snapshot] {
+        var candidates: [Snapshot] = []
+        for table in tables where try db.tableExists(table) {
+            let uuids = try String.fetchAll(db, sql: """
+                SELECT DISTINCT uuid FROM sync_queue
+                WHERE table_name = ? AND operation = 'UPDATE' AND status = 'synced'
+                  AND CASE WHEN json_valid(data) THEN json_extract(data, '$._server_version') = 0 ELSE 0 END
+                """, arguments: [table])
+            for uuid in uuids {
+                if let current = try snapshot(db, table: table, uuid: uuid), !current.isDeleted {
+                    candidates.append(current)
+                }
+            }
+        }
+        return candidates
+    }
+
+    static func recoveryPayload(_ snapshot: Snapshot, userID: String, source: String) throws -> [String: Any] {
+        var payload = try JSONSerialization.jsonObject(with: Data(snapshot.data.utf8)) as! [String: Any]
+        for key in ["id", "_local_version", "_server_version", "_sync_version", "_local_pending"] {
+            payload.removeValue(forKey: key)
+        }
+        payload["user_id"] = userID
+        payload["_source"] = source
+        // Catch up the other device even if its pull cursor passed the capture.
+        payload["updated_at"] = ISO8601.string(from: Date())
+        return payload
+    }
+}

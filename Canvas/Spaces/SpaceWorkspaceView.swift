@@ -71,7 +71,8 @@ struct SpaceWorkspaceView: View {
                 }
             }
             .padding(.top, focus.isFocused ? 0 : SpaceChromeMetrics.contentTopInset)
-            .background(DS.bg)
+            // No ground of its own: SpaceViewHost paints it (the Page's atmosphere
+            // or DS.bg) across the full width, under the sidebar and chrome row.
             .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: store.location(spaceID).sourcesVisible)
         }
         .environment(\.pageFocusPresentation, focus)

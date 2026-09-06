@@ -104,7 +104,7 @@ struct PipelineListView: View {
         .background(DS.surfaceElevated, in: .rect(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(DS.palette.sepiaBorder, lineWidth: 0.5)
+                .strokeBorder(DS.commandChromeBorder, lineWidth: 0.5)
         )
         .clipShape(.rect(cornerRadius: 12))
     }
@@ -148,7 +148,7 @@ struct PipelineListView: View {
             unschedule: { model.schedule(item.id, on: nil) },
             bookSession: { model.bookSession(item.id, on: $0) },
             assignClient: { model.assignClient(item.id, to: $0) },
-            ship: { Task { model.pendingShip = try? await AtomRepository.shared.fetch(uuid: item.id) } },
+            export: { Task { model.pendingExport = try? await AtomRepository.shared.fetch(uuid: item.id) } },
             logPerformance: { Task { model.pendingPerf = try? await AtomRepository.shared.fetch(uuid: item.id) } },
             archive: { model.archive([item.id]) },
             restore: { model.restore(item.id) }
@@ -217,7 +217,7 @@ private struct PipelineLedgerRow: View {
         .overlay(alignment: .bottom) {
             if !isLast {
                 Rectangle()
-                    .fill(DS.palette.sepiaBorder.opacity(0.6))
+                    .fill(DS.commandChromeSeparator)
                     .frame(height: 0.5)
                     .padding(.leading, 42)
             }
@@ -333,7 +333,7 @@ struct PipelineBulkBar: View {
                 .foregroundStyle(DS.text)
             Divider().frame(height: 16)
             Menu {
-                ForEach(ContentProductionStage.allCases.filter { $0 != .published }) { phase in
+                ForEach(ContentProductionStage.allCases) { phase in
                     Button(phase.title) { onMove(phase) }
                 }
             } label: { Label("Move", systemImage: "arrow.right.circle") }

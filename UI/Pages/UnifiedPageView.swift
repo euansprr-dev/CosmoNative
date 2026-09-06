@@ -18,6 +18,7 @@ struct UnifiedPageView: View {
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
     @Environment(\.cosmoFloatingPanelIsVisible) private var panelIsVisible
+    @Environment(\.pageAtmosphereHosted) private var atmosphereHosted
     @State private var localFocus = PageFocusPresentation()
     @State private var session: SpacePageEditorSession
     @State private var assistant: UnifiedPageAssistant
@@ -40,8 +41,10 @@ struct UnifiedPageView: View {
     @State private var wordCount = 0
     @AppStorage("typewriterMode") private var typewriterMode = false
     @AppStorage("noteParagraphFocus") private var paragraphFocus = false
-    @AppStorage("noteFocusV2.leftRail") private var outlineVisible = false
-    @AppStorage("noteFocusV2.rightRail") private var contextVisible = false
+    // Fresh keys: the Notes-era rails defaulted on and left `true` persisted
+    // for everyone. A Page opens without a panel; the toggles stay one click away.
+    @AppStorage("page.outlinePanel") private var outlineVisible = false
+    @AppStorage("page.contextPanel") private var contextVisible = false
 
     init(atom: Atom, spaceID: String? = nil, onClose: (() -> Void)? = nil, initialBlockID: UUID? = nil) {
         self.atom = atom
@@ -58,6 +61,7 @@ struct UnifiedPageView: View {
     private var isFocused: Bool { focus.focusedPageUUID == atom.uuid && focus.focusedPaneID == paneID }
     private var style: NoteDocumentStyle { session.style }
     private var paper: Color { style.paperTone.pageColor(darkMode: colorScheme == .dark) ?? DS.bg }
+    private var atmosphere: PageAtmosphere { PageAtmosphere(style: style, darkMode: colorScheme == .dark) }
     private var readingWidth: CGFloat { style.pageWidth.readingWidth(for: style.textSize) }
     private var store: SpaceWorkspaceStore { .shared }
     private var showsPanel: Bool { !isFocused && (outlineVisible || contextVisible || sourcesVisible) }
@@ -79,7 +83,11 @@ struct UnifiedPageView: View {
             pageLayout(width: geometry.size.width, height: geometry.size.height)
                 .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }
-        .background(paper)
+        // Paper and cover pour across the whole host, never a block in the
+        // column. A space or focus host paints them under its floating chrome
+        // instead; this Page then publishes and stays transparent.
+        .background { if !atmosphereHosted { PageAtmosphereBackground(atmosphere: atmosphere) } }
+        .preference(key: PageAtmospherePreferenceKey.self, value: atmosphereHosted ? atmosphere : nil)
         .environment(\.pageFocusPresentation, focus)
         .cosmoSurfaceKeyWindowActivation(surfaceID: "note:\(contextSession.atom.uuid)")
         .modifier(UnifiedPageLifecycle(page: self))
@@ -104,7 +112,9 @@ struct UnifiedPageView: View {
         return VStack(spacing: 0) {
             header(width: width)
             workspaceError
-            Divider().overlay(DS.borderSubtle).opacity(isFocused ? 0 : 1)
+            // A hairline across a cover wash reads as a seam; the wash itself
+            // separates header from manuscript.
+            Divider().overlay(DS.borderSubtle).opacity(isFocused || style.cover != .none ? 0 : 1)
             HStack(spacing: 0) {
                 manuscript(width: max(1, width - panelWidth), height: height)
                     .frame(width: max(1, width - panelWidth), alignment: .topLeading)
@@ -264,7 +274,7 @@ struct UnifiedPageView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .center, spacing: DS.space32) {
-                    if style.cover != .none || style.pageIcon != nil { identity.frame(width: editorWidth, alignment: .leading) }
+                    if style.pageIcon != nil { identity.frame(width: editorWidth, alignment: .leading) }
                     SpacePageEditor(session: session, initialBlockID: navigationBlockID,
                         minimumBodyHeight: sections.isEmpty ? max(220, height - 300) : 44,
                         typewriterMode: typewriterMode, paragraphFocus: paragraphFocus, showsSaveStatus: !isFocused,
@@ -299,17 +309,13 @@ struct UnifiedPageView: View {
         }
     }
 
-    private var identity: some View {
-        VStack(alignment: .leading, spacing: DS.space16) {
-            if style.cover != .none {
-                NotePageCoverBand(style: style, darkMode: colorScheme == .dark)
-                    .clipShape(.rect(cornerRadius: DS.radiusMedium))
-            }
-            if let icon = style.pageIcon {
-                NotePageIconView(icon: icon, style: style, darkMode: colorScheme == .dark, size: 30, seated: true)
-            }
-        }.padding(.leading, BlockInteractionPolicy.gutterWidth)
-            .frame(height: style.cover == .none && style.pageIcon == nil ? 0 : nil)
+    /// The page's mark. Its cover no longer lives in the column — the wash
+    /// pours from the host's top edge (`PageAtmosphereBackground`).
+    @ViewBuilder private var identity: some View {
+        if let icon = style.pageIcon {
+            NotePageIconView(icon: icon, style: style, darkMode: colorScheme == .dark, size: 30, seated: true)
+                .padding(.leading, BlockInteractionPolicy.gutterWidth)
+        }
     }
 
     @ViewBuilder private var reviewOverlay: some View {
@@ -554,8 +560,8 @@ private struct UnifiedPageManuscriptSection: View {
         VStack(alignment: .leading, spacing: DS.space16) {
             Divider().overlay(DS.borderSubtle)
             if session.style.cover != .none {
-                NotePageCoverBand(style: session.style, darkMode: colorScheme == .dark)
-                    .clipShape(.rect(cornerRadius: DS.radiusMedium)).padding(.leading, BlockInteractionPolicy.gutterWidth)
+                NotePageCoverBand(style: session.style, darkMode: colorScheme == .dark, height: 88)
+                    .clipShape(.rect(cornerRadius: DS.radiusLarge)).padding(.leading, BlockInteractionPolicy.gutterWidth)
             }
             UnifiedPageTitle(session: session, onActivate: { onActivate(session, assistant) })
                 .padding(.leading, BlockInteractionPolicy.gutterWidth)

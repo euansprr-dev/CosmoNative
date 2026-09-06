@@ -107,6 +107,7 @@ class InboxRepository: ObservableObject {
             var mutable = item
             mutable.syncUpdatedAt = ISO8601.string(from: Date())
             try mutable.insert(db)
+            try CaptureSyncOutbox.enqueue(db, table: "inbox_items", uuid: mutable.uuid)
             return mutable
         }
         await ChangeTracker.shared.trackInsert(table: InboxItem.databaseTableName, entity: saved)
@@ -174,6 +175,7 @@ class InboxRepository: ObservableObject {
             item.classifiedAt = ISO8601.string(from: Date())
             Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "inbox_items", uuid: item.uuid)
             return item
         }
         await track(updated)
@@ -192,6 +194,7 @@ class InboxRepository: ObservableObject {
             item.rawText = trimmed
             Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "inbox_items", uuid: item.uuid)
             return item
         }
         await track(updated)
@@ -212,6 +215,7 @@ class InboxRepository: ObservableObject {
             item.rawText = trimmed
             Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "inbox_items", uuid: item.uuid)
             return item
         }
         await track(updated)
@@ -219,13 +223,26 @@ class InboxRepository: ObservableObject {
 
     // MARK: - Actions
 
-    func markActioned(uuid: String) async throws {
+    /// Settle a capture. `outcome` is what ACTUALLY happened ("Moved to
+    /// Groceries", "Inquiry started in Health") — stored as `actionOutcome`
+    /// metadata so History shows the truth, never the suggestion the user
+    /// may have overridden (the iOS repository's twin contract).
+    func markActioned(uuid: String, outcome: String? = nil) async throws {
         let updated = try await database.asyncWrite { db -> InboxItem? in
             guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return nil }
             item.status = .actioned
             item.actionedAt = ISO8601.string(from: Date())
+            if let outcome {
+                var dictionary = item.metadataDictionary
+                dictionary["actionOutcome"] = outcome
+                if let data = try? JSONSerialization.data(withJSONObject: dictionary),
+                   let json = String(data: data, encoding: .utf8) {
+                    item.metadata = json
+                }
+            }
             Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "inbox_items", uuid: item.uuid)
             return item
         }
         await track(updated)
@@ -238,6 +255,7 @@ class InboxRepository: ObservableObject {
             item.actionedAt = ISO8601.string(from: Date())
             Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "inbox_items", uuid: item.uuid)
             return item
         }
         await track(updated)
@@ -249,6 +267,7 @@ class InboxRepository: ObservableObject {
             item.isRead = true
             Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "inbox_items", uuid: item.uuid)
             return item
         }
         await track(updated)
@@ -267,6 +286,7 @@ class InboxRepository: ObservableObject {
             Self.mergeMetadata(&item, fields: [InboxItem.explicitDestinationMetadataKey: "true"])
             Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "inbox_items", uuid: item.uuid)
             return item
         }
         await track(updated)
@@ -301,6 +321,7 @@ class InboxRepository: ObservableObject {
             Self.mergeMetadata(&item, fields: [InboxItem.suppressedTopicsMetadataKey: suppressed.joined(separator: ",")])
             Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "inbox_items", uuid: item.uuid)
             return item
         }
         await track(updated)
@@ -335,6 +356,7 @@ class InboxRepository: ObservableObject {
             item.metadata = merged
             Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "inbox_items", uuid: item.uuid)
             return item
         }
         await track(updated)
@@ -360,12 +382,14 @@ class InboxRepository: ObservableObject {
                 restored.syncVersion = existing.syncVersion
                 Self.prepareTrackedUpdate(&restored)
                 try restored.update(db)
+                try CaptureSyncOutbox.enqueue(db, table: "inbox_items", uuid: restored.uuid)
                 existing = restored
                 return (existing, false)
             } else {
                 var mutable = item
                 mutable.syncUpdatedAt = ISO8601.string(from: Date())
                 try mutable.insert(db)
+                try CaptureSyncOutbox.enqueue(db, table: "inbox_items", uuid: mutable.uuid)
                 return (mutable, true)
             }
         }

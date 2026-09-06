@@ -20,6 +20,7 @@ final class CaptureRequestRepository {
             mutable.syncUpdatedAt = ISO8601.string(from: Date())
             try mutable.insert(db)
             mutable.id = db.lastInsertedRowID
+            try CaptureSyncOutbox.enqueue(db, table: "capture_requests", uuid: mutable.uuid)
             return mutable
         }
         await ChangeTracker.shared.trackInsert(table: CaptureRequest.databaseTableName, entity: saved)
@@ -43,6 +44,7 @@ final class CaptureRequestRepository {
             request.localVersion += 1
             request.syncUpdatedAt = ISO8601.string(from: Date())
             try request.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "capture_requests", uuid: request.uuid)
             return request
         }
         if let updated {

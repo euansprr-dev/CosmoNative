@@ -42,9 +42,11 @@ struct SpaceViewHost<Library: View>: View {
                     .accessibilityHidden(activeView != .deepDive)
             }
             if workspaceIsVisible, let thinkspaceId {
+                // The open Page's paper and cover wash paint here — outside the
+                // sidebar inset, under the chrome row — so the glass lenses them.
                 SpaceWorkspaceView(spaceID: thinkspaceId)
                     .padding(.leading, contentLeadingInset)
-                    .background(DS.bg)
+                    .pageAtmosphereHost()
             }
             if let preservationError, activeView != .canvas {
                 HStack {

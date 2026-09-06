@@ -6,10 +6,15 @@
 // horizontal scroll is never bound to a ScrollPosition (the 120fps law).
 
 import SwiftUI
+import AppKit
 
 struct PipelineBoardView: View {
     let model: PipelinePageModel
     @Binding var cursorID: String?
+    /// Finder selection over the board (item uuids): click, ⌘ toggle, ⇧ range
+    /// across columns in visible order. A drag from a selected card moves them all.
+    @Binding var selection: Set<String>
+    @Binding var selectionAnchor: String?
     let onOpen: (PipelineContentItem) -> Void
     let onOpenAsPane: (PipelineContentItem) -> Void
     let onQuickLook: (String) -> Void
@@ -37,9 +42,12 @@ struct PipelineBoardView: View {
                             width: columnWidth,
                             model: model,
                             cursorID: $cursorID,
+                            selection: $selection,
                             onOpen: onOpen,
                             onOpenAsPane: onOpenAsPane,
-                            onQuickLook: onQuickLook
+                            onQuickLook: onQuickLook,
+                            onSelect: select,
+                            dragString: dragString
                         )
                     }
                 }
@@ -51,6 +59,38 @@ struct PipelineBoardView: View {
         .scrollIndicators(.automatic)
         .scrollClipDisabled()
     }
+
+    /// Visible order, column by column — what ⇧-click ranges walk.
+    private var visibleOrder: [String] {
+        model.snapshot.cursorOrder.flatMap { $0 }.map { PipelineDropPayload.parse($0)?.uuid ?? $0 }
+    }
+
+    /// Finder selection: click selects, ⌘ toggles, ⇧ ranges from the anchor —
+    /// across columns in visible order. Pure state; nothing here re-layouts.
+    private func select(_ item: PipelineContentItem) {
+        let flags = NSApp.currentEvent?.modifierFlags ?? []
+        if flags.contains(.command) {
+            if selection.contains(item.id) { selection.remove(item.id) } else { selection.insert(item.id) }
+            selectionAnchor = item.id
+        } else if flags.contains(.shift), let anchor = selectionAnchor,
+                  let a = visibleOrder.firstIndex(of: anchor), let b = visibleOrder.firstIndex(of: item.id) {
+            selection = Set(visibleOrder[min(a, b)...max(a, b)])
+        } else {
+            selection = [item.id]
+            selectionAnchor = item.id
+        }
+        cursorID = PipelineDropPayload.content(item.id).dragString
+    }
+
+    /// One provider, every chosen piece: a drag from a selected card carries
+    /// the whole selection, in visible order.
+    private func dragString(for item: PipelineContentItem) -> String {
+        guard selection.contains(item.id), selection.count > 1 else {
+            return PipelineDropPayload.content(item.id).dragString
+        }
+        let ordered = visibleOrder.filter { selection.contains($0) }
+        return PipelineDropPayload.batchDragString(ordered.map(PipelineDropPayload.content))
+    }
 }
 
 // MARK: - Column
@@ -60,9 +100,12 @@ struct PipelineColumnView: View {
     var width: CGFloat = 236
     let model: PipelinePageModel
     @Binding var cursorID: String?
+    @Binding var selection: Set<String>
     let onOpen: (PipelineContentItem) -> Void
     let onOpenAsPane: (PipelineContentItem) -> Void
     let onQuickLook: (String) -> Void
+    let onSelect: (PipelineContentItem) -> Void
+    let dragString: (PipelineContentItem) -> String
 
     @State private var isTargeted = false
     @State private var isHeaderHovered = false
@@ -134,7 +177,7 @@ struct PipelineColumnView: View {
         .padding(.horizontal, DS.space6)
         .padding(.bottom, DS.space4)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(DS.palette.sepiaBorder).frame(height: 0.5)
+            Rectangle().fill(DS.commandChromeSeparatorStrong).frame(height: 0.5)
         }
         .contentShape(.rect)
         .onHover { isHeaderHovered = $0 }
@@ -165,16 +208,19 @@ struct PipelineColumnView: View {
     }
 
     private var contentCards: some View {
-        LazyVStack(spacing: DS.space6) {
+        LazyVStack(spacing: DS.space8) {
             ForEach(cards) { card in
                 PipelineBoardCard(
                     card: card,
                     column: column,
                     isCursor: cursorID == card.id,
                     clients: model.clients,
-                    actions: actions(for: card.item)
+                    actions: actions(for: card.item),
+                    isSelected: selection.contains(card.item.id),
+                    selectionCount: selection.count,
+                    onSelect: { onSelect(card.item) },
+                    dragString: { dragString(card.item) }
                 )
-                .onTapGesture { cursorID = card.id }
             }
         }
     }
@@ -208,7 +254,7 @@ struct PipelineColumnView: View {
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(style: StrokeStyle(lineWidth: 0.75, dash: [4, 3]))
-                    .foregroundStyle(DS.palette.sepiaBorder)
+                    .foregroundStyle(DS.commandChromeSeparatorStrong)
             )
     }
 
@@ -222,7 +268,7 @@ struct PipelineColumnView: View {
             unschedule: { model.schedule(item.id, on: nil) },
             bookSession: { model.bookSession(item.id, on: $0) },
             assignClient: { model.assignClient(item.id, to: $0) },
-            ship: { Task { model.pendingShip = try? await AtomRepository.shared.fetch(uuid: item.id) } },
+            export: { Task { model.pendingExport = try? await AtomRepository.shared.fetch(uuid: item.id) } },
             logPerformance: { Task { model.pendingPerf = try? await AtomRepository.shared.fetch(uuid: item.id) } },
             archive: { model.archive([item.id]) },
             restore: { model.restore(item.id) }
@@ -276,7 +322,7 @@ struct PipelineCollapsedColumn: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(isTargeted ? dropTint.opacity(0.45) : DS.palette.sepiaBorder, lineWidth: isTargeted ? 1 : 0.5)
+                    .strokeBorder(isTargeted ? dropTint.opacity(0.45) : DS.commandChromeBorder, lineWidth: isTargeted ? 1 : 0.5)
             )
             .contentShape(.rect(cornerRadius: 12))
         }

@@ -159,8 +159,8 @@ struct ContentIdeasView: View {
                     .buttonStyle(.plain).foregroundStyle(DS.textMuted).help("Clear search").accessibilityLabel("Clear search")
             }
         }
-        .padding(.horizontal, DS.space12).frame(height: 36)
-        .dsGlassInput(isFocused: searchFocused, cornerRadius: DS.radiusSmall)
+        .padding(.horizontal, DS.space12).frame(height: 32)
+        .dsGlassInput(isFocused: searchFocused, cornerRadius: 16)
     }
 
     private var filterMenu: some View {

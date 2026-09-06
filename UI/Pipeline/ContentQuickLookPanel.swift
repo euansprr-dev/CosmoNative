@@ -34,17 +34,17 @@ struct ContentQuickLookPanel: View {
     private var panel: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider().overlay(DS.palette.sepiaBorder)
+            Divider().overlay(DS.commandChromeSeparator)
             ledger
-            Divider().overlay(DS.palette.sepiaBorder)
+            Divider().overlay(DS.commandChromeSeparator)
             excerpt
-            Divider().overlay(DS.palette.sepiaBorder)
+            Divider().overlay(DS.commandChromeSeparator)
             footer
         }
         .background(DS.surfaceElevated, in: .rect(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(DS.palette.sepiaBorder, lineWidth: 0.5)
+                .strokeBorder(DS.commandChromeBorder, lineWidth: 0.5)
         )
         .dsFloatingShadow()
     }

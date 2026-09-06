@@ -18,7 +18,16 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
     case feedConnection
     case attachClient
     case germinateConnection
+    /// The capture opens a research topic no Space covers yet: a NEW Space
+    /// named for the topic, with an inquiry started inside it from the
+    /// capture's question. (Pre-September 2026 this made a standalone deep
+    /// dive; Spaces host inquiries now, so a topic with no home gets one.)
     case germinateDeepDive
+    /// The capture is something the user wants to RESEARCH inside a Space
+    /// they already have: an inquiry session starts there, the capture is
+    /// its question, and any extra prose lands as the session's first note.
+    /// September 2026 — the capture → inquiry loop.
+    case startInquiry
     // The global Seedbed (July 2026) — insight captures GROW: they add mass
     // to a named proto-concept instead of landing as canvas objects or
     // premature pages. startSeedling supersedes germinateConnection (kept
@@ -58,7 +67,9 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
         case .attachClient:
             return "Client idea"
         case .germinateDeepDive:
-            return "New deep dive"
+            return "Inquiry in new Space"
+        case .startInquiry:
+            return "Inquiry in Space"
         case .feedSeedling:
             return "Grows a concept"
         case .startSeedling, .germinateConnection:
@@ -89,6 +100,8 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
             return "person.crop.circle"
         case .germinateDeepDive:
             return "sparkle.magnifyingglass"
+        case .startInquiry:
+            return "text.magnifyingglass"
         case .feedSeedling, .startSeedling, .germinateConnection:
             return "leaf"
         case .fileAsSwipe:
@@ -116,8 +129,8 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
             return "Ask"
         case .attachClient:
             return "Attach"
-        case .germinateDeepDive:
-            return "Start dive"
+        case .germinateDeepDive, .startInquiry:
+            return "Start inquiry"
         case .placeInExistingCluster, .createClusterAndPlace,
              .placeInThinkspace, .createThinkspaceAndPlace, .createStandaloneAtom:
             return "Place"
@@ -139,6 +152,17 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    /// Kinds that land the capture in the inquiry graph (a question thread
+    /// or a Space's inquiry session) — the UI tints these as research.
+    var isInquiryKind: Bool {
+        switch self {
+        case .advanceQuestion, .spawnQuestion, .germinateDeepDive, .startInquiry:
+            return true
+        default:
+            return false
+        }
+    }
+
     var legacyClassification: InboxClassification {
         switch self {
         case .mergeAtom:
@@ -146,7 +170,7 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
         case .fileToDestination, .placeInExistingCluster, .createClusterAndPlace, .placeInThinkspace, .createThinkspaceAndPlace:
             return .place
         case .advanceQuestion, .spawnQuestion, .feedConnection, .attachClient,
-             .germinateConnection, .germinateDeepDive, .feedSeedling, .startSeedling,
+             .germinateConnection, .germinateDeepDive, .startInquiry, .feedSeedling, .startSeedling,
              .fileAsSwipe, .addToFlow:
             // Actionable destination suggestions — the pill renders like a place.
             return .place
@@ -183,6 +207,12 @@ struct InboxAtlasMove: Codable, Equatable, Sendable {
     // Germination (startSeedling / germinateDeepDive; legacy germinateConnection)
     var germinateTitle: String?
 
+    // Space inquiry (startInquiry) — the Space that hosts the session. The
+    // question itself rides `newQuestionTitle`; germinateDeepDive names the
+    // NEW Space via `germinateTitle` instead.
+    var spaceUUID: String?
+    var spaceName: String?
+
     // The global Seedbed (feedSeedling)
     var seedlingUUID: String?
     var seedlingName: String?
@@ -213,7 +243,9 @@ struct InboxAtlasMove: Codable, Equatable, Sendable {
         homeThinkspaceId: String? = nil,
         homeThinkspaceName: String? = nil,
         homeClusterId: String? = nil,
-        homeClusterName: String? = nil
+        homeClusterName: String? = nil,
+        spaceUUID: String? = nil,
+        spaceName: String? = nil
     ) {
         self.deepDiveUUID = deepDiveUUID
         self.deepDiveName = deepDiveName
@@ -233,6 +265,8 @@ struct InboxAtlasMove: Codable, Equatable, Sendable {
         self.homeThinkspaceName = homeThinkspaceName
         self.homeClusterId = homeClusterId
         self.homeClusterName = homeClusterName
+        self.spaceUUID = spaceUUID
+        self.spaceName = spaceName
     }
 }
 

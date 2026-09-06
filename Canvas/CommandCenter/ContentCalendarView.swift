@@ -198,7 +198,8 @@ enum ContentCalendarActions {
 
     static func handleDrop(_ payloads: [String], on day: Date) async -> Bool {
         var handled = false
-        for raw in payloads {
+        // A board multi-select arrives as one provider, one payload per line.
+        for raw in payloads.flatMap({ $0.components(separatedBy: "\n") }) where !raw.isEmpty {
             switch ContentShelfPayload(string: raw) {
             case .idea(let uuid):
                 handled = await promoteIdea(uuid: uuid, to: day) || handled
@@ -413,6 +414,10 @@ struct ContentCalendarView: View {
     /// Everyone, one client, or the unassigned — the Pipeline's scope.
     var scope: PipelineScope = .all
     var filters = PipelineFilters()
+    /// When the host is a viewport (the Pipeline calendar), the grid fills
+    /// this height exactly — Apple Calendar's month, never a stack of cells
+    /// that stretches the page.
+    var availableHeight: CGFloat? = nil
 
     @State private var items: [ContentQueueItem] = []
     @State private var perfByContent: [String: ContentPerfSnapshot] = [:]
@@ -500,6 +505,20 @@ struct ContentCalendarView: View {
         )
     }
 
+    /// A cell shows as many chips as its height honestly holds (header 22,
+    /// chip 19, footer 14); the rest fold into "+n more".
+    private var maxChipsPerCell: Int {
+        guard let height = fixedCellHeight else { return 3 }
+        return max(1, min(5, Int((height - 46) / 20)))
+    }
+
+    /// Rows share the viewport evenly once the weekday header has its 30pt.
+    private var fixedCellHeight: CGFloat? {
+        guard let availableHeight else { return nil }
+        let rows = max(1, monthDates.count / 7)
+        return max(84, floor((availableHeight - 30) / CGFloat(rows)))
+    }
+
     private var weekdayHeader: some View {
         HStack(spacing: 0) {
             ForEach(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], id: \.self) { day in
@@ -542,11 +561,13 @@ struct ContentCalendarView: View {
             pulses: snapshot.pulses(on: day),
             dayViews: snapshot.views(on: day),
             isBestDayOfMonth: snapshot.bestDay == day,
+            maxChips: maxChipsPerCell,
             onOpenDay: { selectedDay = day },
             onDrop: { payloads in drop(payloads, on: day) },
             onChipAction: { handleChipAction($0, entry: $1) }
         )
-        .frame(minHeight: 108)
+        .frame(minHeight: fixedCellHeight == nil ? 108 : nil)
+        .frame(height: fixedCellHeight)
         .popover(
             isPresented: Binding(
                 get: { selectedDay == day },
@@ -694,6 +715,7 @@ private struct ContentCalendarDayCell: View {
     let pulses: [ContentCadencePulse]
     let dayViews: Int
     let isBestDayOfMonth: Bool
+    var maxChips = 3
     let onOpenDay: () -> Void
     let onDrop: ([String]) -> Bool
     let onChipAction: (ContentCalendarView.ChipAction, ContentCalendarEntry) -> Void
@@ -772,11 +794,11 @@ private struct ContentCalendarDayCell: View {
 
     private var chipList: some View {
         VStack(alignment: .leading, spacing: DS.space2 + 1) {
-            ForEach(entries.prefix(3)) { entry in
+            ForEach(entries.prefix(maxChips)) { entry in
                 ContentCalendarChip(entry: entry, onAction: { onChipAction($0, entry) })
             }
-            if entries.count > 3 {
-                Text("+\(entries.count - 3) more")
+            if entries.count > maxChips {
+                Text("+\(entries.count - maxChips) more")
                     .font(DS.caption2).fontWeight(.medium)
                     .foregroundStyle(DS.textMuted)
             }

@@ -52,6 +52,7 @@ final class CaptureDestinationRepository: ObservableObject {
             var mutable = destination
             mutable.syncUpdatedAt = ISO8601.string(from: Date())
             try mutable.insert(db)
+            try CaptureSyncOutbox.enqueue(db, table: "capture_destinations", uuid: mutable.uuid)
             return mutable
         }
         await ChangeTracker.shared.trackInsert(table: CaptureDestination.databaseTableName, entity: saved)
@@ -86,6 +87,7 @@ final class CaptureDestinationRepository: ObservableObject {
             mutable.syncUpdatedAt = now
             mutable.localVersion += 1
             try mutable.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "capture_destinations", uuid: mutable.uuid)
             return mutable
         }
         await ChangeTracker.shared.trackUpdate(
@@ -107,6 +109,7 @@ final class CaptureDestinationRepository: ObservableObject {
                     """,
                 arguments: [now, now, uuid]
             )
+            try CaptureSyncOutbox.enqueue(db, table: "capture_destinations", uuid: uuid)
         }
         await trackAfterRawWrite(uuid: uuid)
         NotificationCenter.default.post(
@@ -128,6 +131,7 @@ final class CaptureDestinationRepository: ObservableObject {
                     """,
                 arguments: [now, now, uuid]
             )
+            try CaptureSyncOutbox.enqueue(db, table: "capture_destinations", uuid: uuid)
         }
         await trackAfterRawWrite(uuid: uuid)
         NotificationCenter.default.post(
@@ -149,6 +153,7 @@ final class CaptureDestinationRepository: ObservableObject {
                     """,
                 arguments: [now, now, now, uuid]
             )
+            try CaptureSyncOutbox.enqueue(db, table: "capture_destinations", uuid: uuid)
         }
         await trackAfterRawWrite(uuid: uuid)
     }

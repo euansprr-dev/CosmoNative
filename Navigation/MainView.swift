@@ -1541,6 +1541,8 @@ struct MainView: View {
                 || focusEntity.type == .connection
             FocusModeView(entity: focusEntity)
                 .padding(.leading, focusEntity.type == .note ? contentPushOffset : 0)
+                // A Page's paper and cover wash run under the sidebar column too.
+                .pageAtmosphereHost(isActive: focusEntity.type == .note)
                 .environment(\.unifiedPageNavigationInset,
                     focusEntity.type == .note && isSidebarHidden && !isSidebarHoverRevealed && !pageFocusPresentation.isFocused ? 60 : 0)
                 // Seat the Page once at its final Focus width. TextKit layout

@@ -24,6 +24,8 @@ class SyncEngine: ObservableObject {
     private let changeTracker = ChangeTracker.shared
     private let supabaseClient: SupabaseClient?
 
+    private var isPushing = false
+    private var pushRequestedWhileBusy = false
     private var syncTimer: Timer?
     private var realtimeSubscription: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
@@ -87,7 +89,7 @@ class SyncEngine: ObservableObject {
                 self?.isOnline = isConnected
                 if isConnected {
                     Task { @MainActor in
-                        await self?.syncPendingChanges()
+                        await self?.performBackgroundSync()
                     }
                 }
             }
@@ -120,6 +122,9 @@ class SyncEngine: ObservableObject {
 
         // Don't sync if not authenticated — RLS will block everything
         guard let client = supabaseClient, client.isAuthenticated else { return }
+
+        syncState = .syncing
+        defer { syncState = .idle }
 
         // Refresh auth token before sync to prevent JWT expired errors
         await SupabaseAuthService.shared.refreshSessionIfNeeded()
@@ -158,7 +163,6 @@ class SyncEngine: ObservableObject {
         // the iPhone.
         await backfillInboxDomainIfNeeded()
 
-        syncState = .syncing
 
         // 0. Heal orphaned pending rows BEFORE the push reads the queue, so any
         // row whose _local_pending shield is up but has no queue row (stranded
@@ -361,6 +365,51 @@ class SyncEngine: ObservableObject {
         // completion — failed conversions keep retrying instead of being orphaned.
     }
 
+    /// Capture writes already have a durable queue entry. Coalesce their
+    /// low-latency delivery through the same serial uploader as reconnects.
+    func requestCapturePush() {
+        Task { await syncPendingChanges() }
+    }
+
+    private func recoverOfflineCapturesIfNeeded() async -> Bool {
+        let flag = "offline_capture_ack_recovery_v1"
+        guard let client = supabaseClient, let userID = client.currentUserId else { return false }
+        do {
+            let done = try await database.asyncRead { db in
+                try String.fetchOne(db, sql: "SELECT value FROM app_flags WHERE key = ?", arguments: [flag]) == "1"
+            }
+            if done { return true }
+            let candidates = try await database.asyncRead { db in
+                try CaptureSyncOutbox.falseAcknowledgementCandidates(db)
+            }
+            var recovered = 0
+            for candidate in candidates {
+                // Include tombstones in this lookup. A record deleted on the
+                // other device is not missing and must never be resurrected.
+                guard try await client.fetchOne(table: candidate.table, uuid: candidate.uuid) == nil else { continue }
+                guard let latest = try await database.asyncRead({ db in
+                    try CaptureSyncOutbox.snapshot(db, table: candidate.table, uuid: candidate.uuid)
+                }), !latest.isDeleted else { continue }
+                let payload = try CaptureSyncOutbox.recoveryPayload(latest, userID: userID, source: "mac")
+                // Ignore duplicates at the server too: another device may
+                // have created/edited the row while the existence check ran.
+                try await client.upsert(table: latest.table, data: payload, onConflict: "uuid", preservingExisting: true)
+                recovered += 1
+            }
+            try await database.asyncWrite { db in
+                try db.execute(sql: "INSERT OR REPLACE INTO app_flags (key, value, updated_at) VALUES (?, '1', ?)",
+                               arguments: [flag, ISO8601.string(from: Date())])
+            }
+            if recovered > 0 {
+                PersistenceHealth.note(.recovery, context: "SyncEngine.offlineCaptureRecovery", detail: "Recovered \(recovered) locally saved capture record(s) missing from the cloud")
+            }
+            return true
+        } catch {
+            PersistenceHealth.note(.syncFailure, context: "SyncEngine.offlineCaptureRecovery", detail: "Local captures are safe; cloud recovery will retry: \(error.localizedDescription)")
+            return false
+        }
+    }
+
     // MARK: - Push Local Changes (Invisible)
     private func syncPendingChanges() async {
         guard isOnline else { return }
@@ -369,6 +418,21 @@ class SyncEngine: ObservableObject {
             print("⏸️ Sync push paused — Supabase auth unavailable")
             return
         }
+
+        guard !isPushing else {
+            pushRequestedWhileBusy = true
+            return
+        }
+        isPushing = true
+        defer {
+            isPushing = false
+            if pushRequestedWhileBusy {
+                pushRequestedWhileBusy = false
+                Task { await syncPendingChanges() }
+            }
+        }
+        let recoveryComplete = await recoverOfflineCapturesIfNeeded()
+        await requeueOrphanedPendingCaptures()
 
         // Give permanently-failed pushes another chance at a slow cadence —
         // they must never silently orphan local edits.
@@ -382,7 +446,7 @@ class SyncEngine: ObservableObject {
         }) ?? 0
 
         guard totalPending > 0 else {
-            pendingChanges = 0
+            await refreshPendingChangeCount()
             return
         }
 
@@ -446,16 +510,16 @@ class SyncEngine: ObservableObject {
                     do {
                         try await database.asyncWrite { db in
                             try db.execute(
-                                sql: "UPDATE sync_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ?",
-                                arguments: [resolution.status, resolution.retryCount, error.localizedDescription, item.id]
+                                sql: "UPDATE sync_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ? AND local_version <= ? AND status = 'pending'",
+                                arguments: [resolution.status, resolution.retryCount, error.localizedDescription, item.id, item.localVersion]
                             )
 
                             // Stamp the failure time so requeueStaleFailedPushes can
                             // re-queue this row after a cool-down.
                             if resolution.status == "failed" {
                                 try db.execute(
-                                    sql: "UPDATE sync_queue SET created_at = ? WHERE id = ?",
-                                    arguments: [Int64(Date().timeIntervalSince1970 * 1000), item.id]
+                                    sql: "UPDATE sync_queue SET created_at = ? WHERE id = ? AND local_version <= ? AND status = 'failed'",
+                                    arguments: [Int64(Date().timeIntervalSince1970 * 1000), item.id, item.localVersion]
                                 )
                             }
 
@@ -485,16 +549,39 @@ class SyncEngine: ObservableObject {
 
             // Publish once per page, not once per item — pendingChanges is
             // observed app-wide and used to publish per pushed row.
-            pendingChanges = max(0, totalPending - attemptedIds.count)
+            await refreshPendingChangeCount()
 
             if items.count < pageSize { break }
         }
 
+        // Keep false-success receipts until recovery could verify the cloud.
+        guard recoveryComplete else { return }
         // Clean up old synced items
         try? await database.asyncWrite { db in
             try db.execute(
                 sql: "DELETE FROM sync_queue WHERE status = 'synced' AND synced_at < datetime('now', '-1 day')"
             )
+        }
+    }
+
+    private func refreshPendingChangeCount() async {
+        do {
+            pendingChanges = try await database.asyncRead { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sync_queue WHERE status IN ('pending', 'failed', 'abandoned')") ?? 0
+            }
+        } catch {
+            PersistenceHealth.note(.syncFailure, context: "SyncEngine.pendingCount", detail: String(describing: error))
+        }
+    }
+
+    private func requeueOrphanedPendingCaptures() async {
+        do {
+            let count = try await database.asyncWrite { db in try CaptureSyncOutbox.reconcileUnqueued(db) }
+            if count > 0 {
+                PersistenceHealth.note(.recovery, context: "SyncEngine.captureOutbox", detail: "Requeued \(count) locally saved capture record(s)")
+            }
+        } catch {
+            PersistenceHealth.note(.syncFailure, context: "SyncEngine.captureOutbox", detail: String(describing: error))
         }
     }
 
@@ -708,17 +795,10 @@ class SyncEngine: ObservableObject {
             }
         }
 
-        let writeDisposition: SyncWriteDisposition
-        if tableName == "atoms" {
-            writeDisposition = SyncWriteDisposition.resolve(
-                requestedOperation: operation,
-                serverVersion: serverVersion
-            )
-        } else if operation == "INSERT" {
-            writeDisposition = .upsert
-        } else {
-            writeDisposition = .update
-        }
+        let writeDisposition: SyncWriteDisposition = SyncWriteDisposition.resolve(
+            requestedOperation: operation,
+            serverVersion: serverVersion
+        )
 
         return PushPayloadPrep(payload: payload, writeDisposition: writeDisposition)
     }

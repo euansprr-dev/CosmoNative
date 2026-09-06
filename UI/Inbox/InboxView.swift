@@ -16,14 +16,19 @@ struct InboxView: View {
         _route = route
     }
 
+    /// The page's width — the toast hangs off the ledger column's leading
+    /// rail, which moves when the composed group centers on wide windows.
+    @State private var pageWidth: CGFloat = 0
+
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack(alignment: .bottomLeading) {
             mainContent
             batchBarOverlay
             undoToastOverlay
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DS.bg)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { pageWidth = $0 }
         .sheet(isPresented: $viewModel.showOverrideSheet) { overrideSheet }
         .modifier(InboxKeyboardModel(viewModel: viewModel))
         .onAppear {
@@ -31,6 +36,12 @@ struct InboxView: View {
             viewModel.isInboxVisible = true
         }
         .onDisappear { viewModel.isInboxVisible = false }
+        // A verb's "Open" follow-up (moved to a lane → that lane's ledger).
+        .onChange(of: viewModel.pendingRoute) { _, next in
+            guard let next else { return }
+            withAnimation(ProMotionSprings.snappy) { route = next }
+            viewModel.pendingRoute = nil
+        }
         .onReceive(NotificationCenter.default.publisher(for: SpaceCompositionService.didFailUndo)) { notification in
             if let message = notification.userInfo?["message"] as? String { viewModel.presentLaneToast(message, isError: true) }
         }
@@ -66,32 +77,63 @@ struct InboxView: View {
     }
 
     private var queuePage: some View {
-        ZStack(alignment: .topTrailing) {
-            // ONE composed ledger column (masthead, capture, queue) anchored
-            // on the shared page rail — hairlines and rows stop at the
-            // column's edge instead of running to the window, and the
-            // trailing band stays clear for the inspector (the same seat
-            // Today gives its timeline). Anchored, not centered: centering
-            // the cap would push the title off the rail Today's title sits
-            // on, which is the misalignment this column exists to fix.
-            VStack(spacing: 0) {
-                masthead(rail: DS.space12)
-                captureHero
-                queueOrEmptyState
+        // ONE composed group — masthead, capture, queue, and the inspector's
+        // seat — capped at Today's ledger measure and CENTERED in the page,
+        // exactly as the Command Center composes its own group. Below the cap
+        // the group is the page (identical rails to Today at every common
+        // window width); above it the margins balance instead of pooling on
+        // the trailing side, which is what read as "the inbox sits left".
+        GeometryReader { geometry in
+            let seated = geometry.size.width >= Self.inspectorSeatMinimumWidth
+            ZStack(alignment: .topTrailing) {
+                VStack(alignment: .leading, spacing: 0) {
+                    masthead(rail: DS.space12)
+                    HStack(alignment: .top, spacing: DS.space24) {
+                        VStack(spacing: 0) {
+                            captureHero
+                            queueOrEmptyState
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        // The inspector is a COLUMN beside the queue (Today's
+                        // timeline seat), not a panel floating over the rows
+                        // it describes. Narrow panes collapse it back to the
+                        // floating overlay — the LAW: collapse, never shrink
+                        // the two columns into each other.
+                        if seated, viewModel.isInspectorOpen, let item = viewModel.focusedItem {
+                            InboxInspector(item: item, viewModel: viewModel)
+                                .padding(.bottom, DS.space16)
+                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                        }
+                    }
+                    .frame(maxHeight: .infinity)
+                }
+                .frame(maxWidth: Self.ledgerGroupWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, DS.pageTitleRail - DS.space12)
+
+                if !seated { inspectorOverlay }
             }
-            .frame(maxWidth: Self.ledgerColumnWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, DS.pageTitleRail - DS.space12)
-            inspectorOverlay
         }
     }
 
-    /// Today's task list at full stretch: its composed group caps at 1500
-    /// and the list takes what's left beside the fixed 302pt timeline, the
-    /// space24 column gap, and the space12 trailing rail (1500 − 302 − 24
-    /// − 12). The queue is the same ledger anatomy, so it caps at the same
-    /// measure — derived, not invented.
-    private static let ledgerColumnWidth: CGFloat = 1162
+    /// Today's composed group caps at 1500 — the same measure here, so the
+    /// two ledger pages share rails at every width (derived, not invented).
+    static let ledgerGroupWidth: CGFloat = 1500
+
+    /// Below this page width the 390pt inspector would squeeze the queue
+    /// under a readable measure, so it floats instead of seating.
+    static let inspectorSeatMinimumWidth: CGFloat = 1040
+
+    /// Where the queue's leading rail sits for the current width — the
+    /// group's centred offset plus the title rail — so the toast hangs off
+    /// the same line the rows and title do.
+    private var ledgerLeadingRail: CGFloat {
+        guard route == .global else { return DS.pageTitleRail }
+        let gutter = DS.pageTitleRail - DS.space12
+        let overflow = max(0, pageWidth - gutter * 2 - Self.ledgerGroupWidth)
+        return DS.pageTitleRail + overflow / 2
+    }
 
     // MARK: - Masthead (Command Center grammar)
 
@@ -253,7 +295,19 @@ struct InboxView: View {
                 onOpen: { viewModel.focusItem(item) },
                 onAccept: { Task { await viewModel.acceptSuggestion(for: item) } },
                 onDismiss: { Task { await viewModel.dismiss(item: item) } },
-                onToggleSelect: { viewModel.toggleSelection(for: item) }
+                onToggleSelect: { viewModel.toggleSelection(for: item) },
+                lanes: viewModel.lanes,
+                inquirySpaces: viewModel.inquirySpaces,
+                onMoveToLane: { lane in Task { await viewModel.moveToLane(item, lane: lane) } },
+                onStartInquiry: { space in
+                    if let space {
+                        Task { await viewModel.startInquiry(item, in: .existing(space)) }
+                    } else {
+                        // "New Space…" names the Space in the destination sheet.
+                        viewModel.showOverride(for: item, focus: .inquiry)
+                    }
+                },
+                onChooseDestination: { viewModel.showOverride(for: item) }
             )
             .transition(.asymmetric(
                 insertion: .opacity.combined(with: .move(edge: .top)),
@@ -282,6 +336,7 @@ struct InboxView: View {
     private var batchBarOverlay: some View {
         if viewModel.isMultiSelectActive {
             InboxBatchBar(viewModel: viewModel)
+                .frame(maxWidth: .infinity)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .animation(ProMotionSprings.snappy, value: viewModel.isMultiSelectActive)
         }
@@ -290,11 +345,14 @@ struct InboxView: View {
     @ViewBuilder
     private var undoToastOverlay: some View {
         if viewModel.showUndoToast {
-            // Bottom-trailing, not bottom-center — the floating assistant bar
-            // owns the bottom-center lane and was covering the toast.
+            // Bottom-LEADING, hanging off the ledger's own rail. The
+            // companion owns the bottom-trailing corner on every page
+            // (CompanionDockMetrics) and sat on top of the toast there; the
+            // bottom-centre lane belongs to the batch bar. The leading rail
+            // is the one place nothing else lives — and it keeps the receipt
+            // beside the rows it reports on, the Gmail undo grammar.
             InboxUndoToast(viewModel: viewModel)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, DS.space24)
+                .padding(.leading, ledgerLeadingRail)
                 .padding(.bottom, viewModel.isMultiSelectActive ? 92 : DS.space20)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }

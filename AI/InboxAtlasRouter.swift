@@ -11,7 +11,10 @@
 //   placeCluster /      — the classic spatial homes, now chosen with
 //   placeThinkspace       understanding instead of centroid geometry
 //   germinateConnection — seed of a new concept page with no home yet
-//   germinateDeepDive   — seed of a new research topic
+//   startInquiry        — the capture is something to RESEARCH → an inquiry
+//                         session inside the Space it belongs to
+//   germinateDeepDive   — a research topic no Space covers → a new Space
+//                         with the inquiry started inside it
 //
 // Anatomy follows InquiryLiveRouter (the codebase's proven classifier): a
 // taught decision procedure, destination keys that must be copied from the
@@ -42,6 +45,9 @@ actor InboxAtlasRouter {
         // dead one-line page — pages are born ripe or not at all.)
         case feedSeedling
         case startSeedling
+        /// September 2026 — the capture → inquiry loop. Spaces host
+        /// inquiries; a research capture becomes a resumable session there.
+        case startInquiry
         case germinateDeepDive
         /// The capture is CRAFT REFERENCE — saved for its form, not its claims.
         /// It becomes a swipe; SwipeIntakeRouter decides page vs frame vs note.
@@ -238,8 +244,19 @@ actor InboxAtlasRouter {
     DESTINATIONS whose material the developed concept would sit beside — its future home. This \
     places nothing now; it only tags where the concept belongs once it becomes a page. Set homeKey \
     null unless one home is obvious.
-    - "germinateDeepDive" — the capture opens a substantial research territory no listed topic covers. \
-    newTitle = the topic name. Rare; prefer spawnQuestion under an existing topic when one fits.
+    - "startInquiry" — the capture is something the user wants to RESEARCH or UNDERSTAND (a topic \
+    to investigate, "research X", "look into Y", "how does X affect Y", "what do we know about Z") \
+    and one of the WORKSPACES listed is where that research belongs. targetKey = that workspace's \
+    key; newTitle = the question phrased as ONE clear research question (keep the user's words; end \
+    with a question mark). This starts a resumable inquiry session inside the workspace with the \
+    capture as its question — a room to investigate in, not a note. Prefer startInquiry over \
+    spawnQuestion when the capture is a whole line of research rather than a narrow sub-question \
+    of a listed open question.
+    - "germinateDeepDive" — the capture is a research topic (as above) but NO listed workspace \
+    covers it. newTitle = a short name for the NEW workspace (a topic noun phrase, 2–5 words). \
+    A new Space is created with that name and the inquiry starts inside it, with the capture as \
+    the question. Use it whenever a research capture has no workspace home — never leave a \
+    research capture unrouted just because the topic is new.
     - "fileAsSwipe" — the capture is CRAFT REFERENCE: the user saved it for its FORM — how it is \
     written, laid out, or sold — rather than for what it claims. No targetKey. A sales page, a \
     landing page, an ad, a screenshot of someone's post, a headline or a piece of copy with no \
@@ -258,7 +275,10 @@ actor InboxAtlasRouter {
     3. DESTINATION TEST — a destination matches only if the capture would sit naturally next to its \
     charter and example contents. The name alone is never enough evidence.
     4. QUESTIONS BEFORE FOLDERS — if the capture is a question or clearly serves one, prefer \
-    advanceQuestion/spawnQuestion over spatial placement; research threads compound, folders don't.
+    advanceQuestion/spawnQuestion over spatial placement; research threads compound, folders don't. \
+    RESEARCH GETS A ROOM — a capture that names something to research or understand (not a fact, \
+    not a task) becomes an inquiry: startInquiry in the workspace it belongs to, or \
+    germinateDeepDive when no workspace fits. Filing a research intent as a Page loses it.
     5. MATCH THE USER’S WORK — Pages and Groups are valid homes for thoughts and writing. \
     Suggest Concept development only when it clearly develops a named concept; it is optional. \
     A Page destination attaches a reference; a Group destination adds membership. No suggestion \
@@ -269,7 +289,8 @@ actor InboxAtlasRouter {
     HARD RULES:
     1. NEVER invent keys — targetKey, parentQuestionKey, and homeKey must be copied verbatim from \
     DESTINATIONS (homeKey additionally must be a cluster or workspace key).
-    2. At most 3 moves, ranked best first. At most ONE spawnQuestion/germinate move per capture.
+    2. At most 3 moves, ranked best first. At most ONE creation move (spawnQuestion, startInquiry, \
+    germinateDeepDive, startSeedling) per capture.
     3. "title": a concise title for the capture, at most 10 words, preserving the user's language.
     4. "growth": one short sentence on what accepting the move builds ("adds evidence to a maturing \
     concept", "opens a branch under an active question"). No filler.
@@ -289,6 +310,18 @@ actor InboxAtlasRouter {
     "targetKey":"deepdive-D1","section":null,"newTitle":"How much of willpower is environment design?",\
     "parentQuestionKey":"question-Q1","growth":"Opens a branch that directly advances the systems question.",\
     "confidence":0.85}]}
+
+    Example A2 — a research intent becomes an inquiry in the workspace it belongs to:
+    Capture: "research the effects of chronic stress on the body, mind and creativity"
+    DESTINATIONS include workspace {"key":"thinkspace-W3"} Health & Performance, and no open \
+    question about stress.
+    → {"title":"Effects of chronic stress on body, mind, creativity","captureType":"question",\
+    "moves":[{"kind":"startInquiry","targetKey":"thinkspace-W3","section":null,\
+    "newTitle":"How does chronic stress affect the body, mind, and creativity?","parentQuestionKey":null,\
+    "homeKey":null,"growth":"Opens a resumable inquiry in Health & Performance with sources and evidence to follow.",\
+    "confidence":0.85}]}
+    (A "research X" capture is an inquiry, not a page. Had no workspace fit, the move would be \
+    germinateDeepDive with newTitle "Chronic stress" — a new Space with the inquiry inside.)
 
     Example B — an attributed finding feeds a concept page's evidence:
     Capture: "A 2023 meta-analysis found habit formation takes 59-66 days on average, not 21"
@@ -552,6 +585,12 @@ actor InboxAtlasRouter {
             guard let key = targetKey, entriesByKey[key]?.kind == .thinkspace else { return nil }
         case .feedSeedling:
             guard let key = targetKey, entriesByKey[key]?.kind == .seedling else { return nil }
+        case .startInquiry:
+            // A Space hosts the session — the key must name a real workspace.
+            // Without one the router should have said germinateDeepDive.
+            guard let key = targetKey, entriesByKey[key]?.kind == .thinkspace, newTitle != nil else { return nil }
+            if usedCreationMove { return nil }
+            usedCreationMove = true
         case .startSeedling, .germinateDeepDive:
             guard newTitle != nil else { return nil }
             if usedCreationMove { return nil }

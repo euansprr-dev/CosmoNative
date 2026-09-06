@@ -308,7 +308,6 @@ struct LibraryPagePreview: View {
                 .clipped()
         }
         .padding(DS.space16)
-        .padding(.top, coverHeight > 0 ? coverHeight - DS.space8 : 0)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(paperFill)
         .background(alignment: .top) { coverBand }
@@ -320,7 +319,7 @@ struct LibraryPagePreview: View {
     }
 
     private var coverHeight: CGFloat {
-        (pageStyle?.cover ?? NoteDocumentStyle.Cover.none) == NoteDocumentStyle.Cover.none ? 0 : 22
+        (pageStyle?.cover ?? NoteDocumentStyle.Cover.none) == NoteDocumentStyle.Cover.none ? 0 : 56
     }
 
     @ViewBuilder

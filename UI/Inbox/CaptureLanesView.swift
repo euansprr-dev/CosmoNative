@@ -313,8 +313,75 @@ extension CaptureLanesViewModel: InboxInspectorHost {
         await triageModel?.makeTask(item)
     }
 
-    func askInDeepDive(_ item: InboxItem) async {
-        await triageModel?.askInDeepDive(item)
+    var inquirySpaces: [InquirySpaceOption] {
+        triageModel?.inquirySpaces ?? []
+    }
+
+    /// A lane capture becomes an inquiry the same way a queue capture does —
+    /// the executor settles the ledger row (applied, session in its created
+    /// objects) instead of the queue.
+    func startInquiry(_ item: InboxItem, in choice: InquirySpaceChoice) async {
+        await triageModel?.startInquiry(item, in: choice)
+        await refresh()
+    }
+
+    /// Every lane but the one this capture is already in.
+    var lanes: [CaptureDestination] {
+        destinations.filter { $0.uuid != selectedDestinationId }
+    }
+
+    /// Lane → lane: the ledger row's routing changes, nothing is created.
+    /// Undo puts it back in the lane it came from.
+    func moveToLane(_ item: InboxItem, lane: CaptureDestination) async {
+        guard let capture = capture(matching: item) else { return }
+        do {
+            try await capturedRepo.updateRouting(
+                uuid: capture.uuid,
+                destinationId: lane.uuid,
+                parsedCommand: capture.parsedCommand,
+                parsedIntent: "lane_move",
+                confidence: capture.routingConfidence,
+                status: capture.status,
+                createdObjectIds: capture.createdObjectIds,
+                parentDeepDiveId: capture.parentDeepDiveId,
+                parentInquirySessionId: capture.parentInquirySessionId,
+                parentQuestionId: capture.parentQuestionId,
+                parentProjectId: capture.parentProjectId
+            )
+            await CaptureDestinationRepository.shared.markUsed(uuid: lane.uuid)
+            isInspectorOpen = false
+            focusedCaptureId = nil
+            NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
+            await refresh()
+            let original = capture
+            CosmoUndoManager.shared.register(
+                InlineUndoAction(actionDescription: "Move Capture to Lane") { [weak self] in
+                    try? await self?.setStatus(of: original, to: original.status, intent: original.parsedIntent)
+                    NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
+                } redo: { [weak self] in
+                    guard let self else { return }
+                    try? await self.capturedRepo.updateRouting(
+                        uuid: original.uuid,
+                        destinationId: lane.uuid,
+                        parsedCommand: original.parsedCommand,
+                        parsedIntent: "lane_move",
+                        confidence: original.routingConfidence,
+                        status: original.status,
+                        createdObjectIds: original.createdObjectIds,
+                        parentDeepDiveId: original.parentDeepDiveId,
+                        parentInquirySessionId: original.parentInquirySessionId,
+                        parentQuestionId: original.parentQuestionId,
+                        parentProjectId: original.parentProjectId
+                    )
+                    NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
+                }
+            )
+            triageModel?.presentLaneToast("Moved to \(lane.name)")
+        } catch {
+            print("CaptureLanesViewModel.moveToLane failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "CaptureLanesVM.moveToLane", detail: "\(capture.uuid): \(error.localizedDescription)")
+            triageModel?.presentLaneToast("Couldn't move that capture.", isError: true)
+        }
     }
 
     func fileAsIdea(_ item: InboxItem) async {

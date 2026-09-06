@@ -81,7 +81,7 @@ final class SupabaseClient {
 
     // MARK: - Upsert (Insert or Update on Conflict)
 
-    func upsert(table: String, data: [String: Any], onConflict: String) async throws {
+    func upsert(table: String, data: [String: Any], onConflict: String, preservingExisting: Bool = false) async throws {
         let url = try buildURL(table: table)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -101,7 +101,7 @@ final class SupabaseClient {
         }
 
         // Supabase prefers header for merge strategy
-        request.setValue("return=minimal,resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
+        request.setValue(preservingExisting ? "return=minimal,resolution=ignore-duplicates" : "return=minimal,resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
 
         request.httpBody = try JSONSerialization.data(withJSONObject: data)
 
@@ -153,11 +153,14 @@ final class SupabaseClient {
 
     // MARK: - Update
 
-    func update(table: String, uuid: String, data: [String: Any]) async throws {
+    func update(table: String, uuid: String, data: [String: Any], requireExistingRow: Bool = true) async throws {
         guard var urlComponents = URLComponents(string: "\(baseURL)/rest/v1/\(table)") else {
             throw SupabaseError.invalidURL
         }
-        urlComponents.queryItems = [URLQueryItem(name: "uuid", value: "eq.\(uuid)")]
+        urlComponents.queryItems = [
+            URLQueryItem(name: "uuid", value: "eq.\(uuid)"),
+            URLQueryItem(name: "select", value: "uuid")
+        ]
 
         guard let url = urlComponents.url else {
             throw SupabaseError.invalidURL
@@ -165,7 +168,7 @@ final class SupabaseClient {
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+        request.setValue("return=representation", forHTTPHeaderField: "Prefer")
         addHeaders(to: &request)
         request.httpBody = try JSONSerialization.data(withJSONObject: data)
 
@@ -176,6 +179,14 @@ final class SupabaseClient {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
             let body = String(data: responseData, encoding: .utf8) ?? ""
             throw SupabaseError.updateFailed(statusCode: statusCode, body: body)
+        }
+        // PostgREST returns 2xx even when a PATCH matches no row. That is
+        // NOT a saved capture; keep the outbox entry and pending shield.
+        if requireExistingRow {
+            guard let rows = try JSONSerialization.jsonObject(with: responseData) as? [[String: Any]],
+                  rows.contains(where: { $0["uuid"] as? String == uuid }) else {
+                throw SupabaseError.missingRow(table: table, uuid: uuid)
+            }
         }
     }
 
@@ -191,7 +202,7 @@ final class SupabaseClient {
             "is_deleted": true,
             "updated_at": ISO8601.string(from: Date()),
             "_source": SupabaseSyncTrafficPolicy.localSource
-        ])
+        ], requireExistingRow: false)
     }
 
     // MARK: - Fetch Changes (Pull)
@@ -507,6 +518,7 @@ enum SupabaseError: LocalizedError {
     case fetchFailed
     case invalidResponse
     case authRequired
+    case missingRow(table: String, uuid: String)
 
     var errorDescription: String? {
         switch self {
@@ -517,6 +529,7 @@ enum SupabaseError: LocalizedError {
         case .fetchFailed: return "Failed to fetch from Supabase"
         case .invalidResponse: return "Invalid response from Supabase"
         case .authRequired: return "Supabase authentication required"
+        case .missingRow(let table, let uuid): return "Cloud record missing (\(table)/\(uuid)); local changes remain queued"
         }
     }
 }

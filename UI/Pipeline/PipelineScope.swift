@@ -141,9 +141,24 @@ enum PipelineDropPayload: Equatable, Hashable, Sendable {
         return nil
     }
 
+    /// A multi-select drag carries every piece in ONE provider, one payload
+    /// per line — SwiftUI's `onDrag` hands over a single item, and the drop
+    /// side has always received `[String]`. Readers split lines first, so a
+    /// single-line payload behaves exactly as before.
+    static let batchSeparator = "\n"
+
+    static func batchDragString(_ payloads: [PipelineDropPayload]) -> String {
+        payloads.map(\.dragString).joined(separator: batchSeparator)
+    }
+
+    /// Every recognised payload in a drop, in order, across providers and lines.
+    static func all(in payloads: [String]) -> [PipelineDropPayload] {
+        payloads.flatMap { $0.components(separatedBy: batchSeparator) }.compactMap(parse)
+    }
+
     /// First recognised payload in a multi-item drop.
     static func first(in payloads: [String]) -> PipelineDropPayload? {
-        payloads.lazy.compactMap(parse).first
+        all(in: payloads).first
     }
 
     var uuid: String {

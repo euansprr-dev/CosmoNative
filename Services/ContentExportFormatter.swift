@@ -40,6 +40,68 @@ enum ExportPlatform: String, CaseIterable, Identifiable, Sendable {
         case .newsletterMarkdown: return "envelope"
         }
     }
+
+    /// The pill label — the platform's mark carries the brand, so the word
+    /// names the SHAPE ("Thread", "Caption"), never repeats the brand.
+    var shortName: String {
+        switch self {
+        case .xThread: return "Thread"
+        case .xPost: return "Post"
+        case .linkedIn: return "LinkedIn"
+        case .instagramCaption: return "Caption"
+        case .carouselSlides: return "Carousel"
+        case .newsletterMarkdown: return "Newsletter"
+        }
+    }
+
+    /// The social platform a publish record is stamped with for this format.
+    var publishPlatform: SocialPlatform {
+        switch self {
+        case .xThread, .xPost: return .x
+        case .linkedIn: return .linkedin
+        case .instagramCaption, .carouselSlides: return .instagram
+        case .newsletterMarkdown: return .substack
+        }
+    }
+
+    /// `PlatformBrandMark` key when the format belongs to a brand; nil for
+    /// formats that are shapes (a carousel, a newsletter) and wear `glyph`.
+    var brandKey: String? {
+        switch self {
+        case .xThread, .xPost: return "x"
+        case .linkedIn: return "linkedin"
+        case .instagramCaption: return "instagram"
+        case .carouselSlides, .newsletterMarkdown: return nil
+        }
+    }
+
+    /// SF glyph for brand-less formats.
+    var glyph: String {
+        switch self {
+        case .carouselSlides: return "square.stack"
+        case .newsletterMarkdown: return "envelope"
+        default: return icon
+        }
+    }
+
+    /// Where the export opens: the piece's own format first (a thread IS a
+    /// thread), then its platform, then the thread as the safe default.
+    static func suggested(platform: SocialPlatform?, format: ContentFormat?) -> ExportPlatform {
+        switch format {
+        case .thread: return .xThread
+        case .tweet: return .xPost
+        case .carousel: return .carouselSlides
+        case .newsletter, .longForm: return .newsletterMarkdown
+        default: break
+        }
+        switch platform {
+        case .x, .twitter, .threads: return .xThread
+        case .linkedin: return .linkedIn
+        case .instagram, .tiktok, .youtube, .facebook: return .instagramCaption
+        case .substack, .medium: return .newsletterMarkdown
+        default: return .xThread
+        }
+    }
 }
 
 // MARK: - Output

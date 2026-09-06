@@ -340,7 +340,13 @@ struct CaptureOverlayView: View {
                 .foregroundStyle(DS.textSecondary)
                 .contentTransition(.numericText())
 
-            stagedDestinationControl
+            if let lane = viewModel.laneAssist.hint?.lane {
+                Text("→ \(lane.name)")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
+            } else {
+                stagedDestinationControl
+            }
 
             Spacer(minLength: DS.space8)
 
@@ -443,11 +449,14 @@ struct CaptureOverlayView: View {
     }
 
     private var sendButtonLabel: String {
-        viewModel.stagedDestination == .swipe ? "Swipe" : "Capture"
+        viewModel.laneAssist.hint == nil && viewModel.stagedDestination == .swipe ? "Swipe" : "Capture"
     }
 
     private var sendButtonHelp: String {
-        viewModel.stagedDestination == .swipe
+        if let lane = viewModel.laneAssist.hint?.lane {
+            return "Capture these attachments in \(lane.name) (⌘⏎)"
+        }
+        return viewModel.stagedDestination == .swipe
             ? "Save as one swipe — a typed thought rides along as the note (⌘⏎)"
             : "Capture — a typed thought and these files land together (⌘⏎)"
     }

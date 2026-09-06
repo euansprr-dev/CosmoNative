@@ -263,10 +263,10 @@ private struct NotePageStylePageSection: View {
     }
 
     private func coverPreviewFill(_ cover: NoteDocumentStyle.Cover) -> AnyShapeStyle {
-        guard let colors = cover.gradientColors(tone: style.paperTone, darkMode: darkMode) else {
+        guard let color = cover.washColor(tone: style.paperTone, darkMode: darkMode) else {
             return AnyShapeStyle(DS.glassInputFill.opacity(0.5))
         }
-        return AnyShapeStyle(LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom))
+        return AnyShapeStyle(LinearGradient(stops: PageCoverWash.stops(for: color), startPoint: .top, endPoint: .bottom))
     }
 
     // MARK: Panels
@@ -274,7 +274,7 @@ private struct NotePageStylePageSection: View {
     private var panelsRows: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             toggleRow(icon: "list.bullet.rectangle", label: "Outline panel", binding: $leftRailVisible)
-            toggleRow(icon: "point.3.connected.trianglepath.dotted", label: "Connections panel", binding: $rightRailVisible)
+            toggleRow(icon: "point.3.connected.trianglepath.dotted", label: "Context panel", binding: $rightRailVisible)
         }
     }
 
@@ -374,19 +374,20 @@ struct PaperToneBloomPulse: View {
     }
 }
 
-/// The cover band above the title — pure gradient, scrolls with the page,
-/// concentric with whatever container clips it.
+/// An in-column cover wash for miniatures and sections — the canvas card,
+/// the library tile, a section inside a manuscript. The Page itself pours
+/// its wash full-bleed through `PageAtmosphereBackground`; both fade with
+/// the same `PageCoverWash` stops, so the miniature is faithful.
 struct NotePageCoverBand: View {
     let style: NoteDocumentStyle
     var darkMode: Bool = false
     var height: CGFloat = 110
 
     var body: some View {
-        if let colors = style.cover.gradientColors(tone: style.paperTone, darkMode: darkMode) {
-            LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom)
+        if let color = style.cover.washColor(tone: style.paperTone, darkMode: darkMode) {
+            PageCoverWash(color: color)
                 .frame(height: height)
                 .frame(maxWidth: .infinity)
-                .accessibilityHidden(true)
                 .transition(.opacity)
         }
     }

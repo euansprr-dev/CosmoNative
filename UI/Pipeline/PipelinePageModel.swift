@@ -46,7 +46,9 @@ final class PipelinePageModel {
     @ObservationIgnored private var snapshotGeneration = 0
     /// The card awaiting a date (Scheduled-column drop, "Schedule…").
     var pendingSchedule: PipelineContentItem?
-    var pendingShip: Atom?
+    /// The piece awaiting the Export panel (Export…, ⌘E). Publishing never
+    /// routes here: a piece dropped on Published was shipped elsewhere.
+    var pendingExport: Atom?
     var pendingPerf: Atom?
     var quickLookID: String?
 
@@ -305,7 +307,7 @@ final class PipelinePageModel {
 
     func move(_ uuid: String, to stage: ContentProductionStage) {
         guard let item = item(uuid), item.productionStage != stage || item.phase == .archived else { return }
-        if stage == .published { pendingShip = item.atom; return }
+        if stage == .published { publish([uuid]); return }
         Task {
             do {
                 guard let fresh = try await AtomRepository.shared.fetch(uuid: uuid) else { return }
@@ -319,6 +321,39 @@ final class PipelinePageModel {
                 ))
                 toast("Moved to \(stage.title)")
             } catch { toast("Couldn't move the piece — \(error.localizedDescription)") }
+            await load()
+        }
+    }
+
+    /// Landing on Published records the ship: a per-platform publish record
+    /// dated today (the piece's own platform, else "other") that the calendar,
+    /// the client aggregates and the Published column all read. Nothing to
+    /// export — the piece already went out. One ⌘Z for the whole batch.
+    func publish(_ uuids: [String]) {
+        let targets = uuids.compactMap { item($0) }.filter { !$0.isShipped }
+        guard !targets.isEmpty else { return }
+        Task {
+            let keys = ["productionStage", "phase", "status", "phaseBeforeSchedule", "publishRecords"]
+            var before: [ContentMetadataSnapshot] = []
+            var after: [ContentMetadataSnapshot] = []
+            for target in targets {
+                guard let fresh = try? await AtomRepository.shared.fetch(uuid: target.id) else { continue }
+                before.append(ContentMetadataSnapshot(atom: fresh, keys: keys))
+                await ContentPublishStore.markPublished(atomUuid: target.id, platform: (target.platform ?? .other).rawValue)
+                if let updated = try? await AtomRepository.shared.fetch(uuid: target.id) {
+                    after.append(ContentMetadataSnapshot(atom: updated, keys: keys))
+                }
+            }
+            let undo = before, redo = after
+            if !undo.isEmpty {
+                CosmoUndoManager.shared.register(InlineUndoAction(
+                    actionDescription: undo.count == 1 ? "Publish" : "Publish \(undo.count) pieces",
+                    undo: { for snapshot in undo { _ = await snapshot.restore() } },
+                    redo: { for snapshot in redo { _ = await snapshot.restore() } }
+                ))
+            }
+            toast(targets.count == 1 ? "Published · \(targets[0].title)" : "Published \(targets.count) pieces")
+            NotificationCenter.default.post(name: .contentCalendarNeedsReload, object: nil)
             await load()
         }
     }
@@ -390,7 +425,8 @@ final class PipelinePageModel {
     }
 
     func bulkMove(_ uuids: [String], to stage: ContentProductionStage) {
-        guard !uuids.isEmpty, stage != .published else { return }
+        guard !uuids.isEmpty else { return }
+        if stage == .published { publish(uuids); return }
         Task {
             var before: [ContentMetadataSnapshot] = []
             var after: [ContentMetadataSnapshot] = []
@@ -475,10 +511,16 @@ final class PipelinePageModel {
     /// ideas enter the board through Begin writing, never by drop.
     @discardableResult
     func handleDrop(_ payloads: [String], on column: PipelineBoardSnapshot.Column) -> Bool {
-        guard let payload = PipelineDropPayload.first(in: payloads), case .content(let uuid) = payload,
-              let item = item(uuid) else { return false }
-        if column == .shipped { pendingShip = item.atom }
-        else { move(uuid, to: column.stage) }
+        let uuids = PipelineDropPayload.all(in: payloads).compactMap { payload -> String? in
+            guard case .content(let uuid) = payload, item(uuid) != nil else { return nil }
+            return uuid
+        }
+        guard !uuids.isEmpty else { return false }
+        // Dropping on Published IS publishing — the piece went out elsewhere
+        // and the board only records it. Export stays a deliberate act (⌘E).
+        if column == .shipped { publish(uuids) }
+        else if uuids.count == 1 { move(uuids[0], to: column.stage) }
+        else { bulkMove(uuids, to: column.stage) }
         return true
     }
 

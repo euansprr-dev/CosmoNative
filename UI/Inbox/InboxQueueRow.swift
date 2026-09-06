@@ -15,6 +15,14 @@ struct InboxQueueRow: View {
     let onAccept: () -> Void
     let onDismiss: () -> Void
     let onToggleSelect: () -> Void
+    /// Right-click routing — the row offers the same direct moves the
+    /// inspector does (lanes, inquiry Spaces) without opening it. Empty
+    /// lists hide their submenus; nil handlers hide their items.
+    var lanes: [CaptureDestination] = []
+    var inquirySpaces: [InquirySpaceOption] = []
+    var onMoveToLane: ((CaptureDestination) -> Void)? = nil
+    var onStartInquiry: ((InquirySpaceOption?) -> Void)? = nil
+    var onChooseDestination: (() -> Void)? = nil
 
     @State private var isHovered = false
 
@@ -26,9 +34,44 @@ struct InboxQueueRow: View {
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
+        .contextMenu { contextMenuItems }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isFocused ? [.isSelected] : [])
         .help(item.hasActionableSuggestion ? "Open inspector — ⏎ accepts the suggestion" : "Open inspector")
+    }
+
+    // MARK: - Context menu
+
+    @ViewBuilder
+    private var contextMenuItems: some View {
+        if item.hasActionableSuggestion {
+            Button("Accept suggestion", systemImage: "checkmark", action: onAccept)
+        }
+        if let onMoveToLane, !lanes.isEmpty {
+            Menu {
+                ForEach(lanes, id: \.uuid) { lane in
+                    Button(lane.name, systemImage: lane.icon) { onMoveToLane(lane) }
+                }
+            } label: {
+                Label("Move to lane", systemImage: "tray.2")
+            }
+        }
+        if let onStartInquiry {
+            Menu {
+                ForEach(inquirySpaces) { space in
+                    Button(space.name) { onStartInquiry(space) }
+                }
+                if !inquirySpaces.isEmpty { Divider() }
+                Button("New Space…", systemImage: "plus") { onStartInquiry(nil) }
+            } label: {
+                Label("Start inquiry in", systemImage: "text.magnifyingglass")
+            }
+        }
+        if let onChooseDestination {
+            Button("Choose destination…", systemImage: "tray.and.arrow.down", action: onChooseDestination)
+        }
+        Divider()
+        Button("Dismiss", systemImage: "xmark", action: onDismiss)
     }
 
     private var rowContent: some View {

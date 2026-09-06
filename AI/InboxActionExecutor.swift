@@ -126,6 +126,8 @@ final class InboxActionExecutor {
             return try await executeStartSeedling(item: item, recommendation: recommendation).map { .seedling($0) }
         case .germinateDeepDive:
             return try await executeGerminateDeepDive(item: item, recommendation: recommendation).map { .atom($0) }
+        case .startInquiry:
+            return try await executeStartInquiry(item: item, recommendation: recommendation).map { .atom($0) }
         case .createStandaloneAtom:
             let atomType = AtomType(rawValue: recommendation.suggestedAtomType) ?? .connection
             return .atom(try await executeNew(item: item, atomType: atomType))
@@ -598,31 +600,376 @@ final class InboxActionExecutor {
         )
     }
 
-    /// The capture opens a research territory of its own: a new deep dive
-    /// whose root question is the capture.
+    // MARK: - Space inquiries (September 2026 — the capture → inquiry loop)
+
+    /// What starting an inquiry produced: the session, its Space, and every
+    /// atom the start CREATED (session, question, profile, first note) so
+    /// undo takes back exactly those and leaves pre-existing research alone.
+    struct InquiryStart: Sendable {
+        let session: Atom
+        let spaceID: String
+        let spaceName: String
+        let createdAtomUUIDs: [String]
+        /// Set when the move also created the hosting Space.
+        let createdSpaceID: String?
+    }
+
+    /// The capture is something to research inside a Space the user already
+    /// has: an inquiry session starts there with the capture as its question.
+    @discardableResult
+    func executeStartInquiry(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
+        guard let move = recommendation.atlasMove, let spaceID = move.spaceUUID else { return nil }
+        let question = move.newQuestionTitle ?? item.title ?? String(item.rawText.prefix(120))
+        return try await executeStartInquiry(item: item, spaceID: spaceID, question: question)?.session
+    }
+
+    /// Manual verb twin — the inspector's "Start inquiry in…" menu and the
+    /// destination sheet. Nil when the Space no longer exists.
+    @discardableResult
+    func executeStartInquiry(item: InboxItem, spaceID: String, question: String?) async throws -> InquiryStart? {
+        _ = try await settlement(for: item)
+        guard let space = try await atomRepo.fetch(uuid: spaceID), !space.isDeleted, space.type == .thinkspace else { return nil }
+        let spaceName = space.metadataValue(as: ThinkspaceMetadata.self)?.name ?? space.title ?? "Space"
+        return try await startInquiry(item: item, spaceID: spaceID, spaceName: spaceName, question: question, createdSpaceID: nil)
+    }
+
+    /// The capture opens a research topic no Space covers yet: a NEW Space
+    /// named for the topic, with the inquiry started inside it. (Pre-September
+    /// 2026 this made a standalone deep dive nobody could find; Spaces host
+    /// inquiries now, so a topic with no home gets one.)
     @discardableResult
     func executeGerminateDeepDive(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
-        try await requireInboxSource(item)
         let topicTitle = recommendation.atlasMove?.germinateTitle ?? item.title ?? fallbackTitle(for: item)
-        let dive = try await InquiryRepository.shared.createDeepDive(
-            title: topicTitle,
-            about: "Opened from an inbox capture."
+        let question = item.title ?? String(item.rawText.prefix(120))
+        return try await executeStartInquiryInNewSpace(item: item, spaceName: topicTitle, question: question)?.session
+    }
+
+    /// Manual twin of the new-Space move: create the Space, then start the
+    /// inquiry inside it. Nil when the Space could not be created.
+    @discardableResult
+    func executeStartInquiryInNewSpace(item: InboxItem, spaceName: String, question: String?) async throws -> InquiryStart? {
+        _ = try await settlement(for: item)
+        let name = spaceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty,
+              let space = await ThinkspaceManager.shared.createThinkspace(name: name) else { return nil }
+        do {
+            return try await startInquiry(item: item, spaceID: space.id, spaceName: space.name, question: question, createdSpaceID: space.id)
+        } catch {
+            // The Space was made for this inquiry alone — a failed start must
+            // not strand an empty Space in the sidebar.
+            await ThinkspaceManager.shared.softDelete(space.id)
+            throw error
+        }
+    }
+
+    /// The one inquiry-start path: resumes an identical open question in the
+    /// Space (SpaceResearchService.start dedups by question key), keeps any
+    /// prose beyond the question as the session's first note, carries the
+    /// capture's originals across, settles the capture, and registers undo.
+    private func startInquiry(
+        item: InboxItem,
+        spaceID: String,
+        spaceName: String,
+        question: String?,
+        createdSpaceID: String?
+    ) async throws -> InquiryStart {
+        let cleaned = (question ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = cleaned.isEmpty ? fallbackTitle(for: item) : cleaned
+
+        // Snapshot the Space's research BEFORE starting, so undo removes only
+        // what this start created — never a question or profile that was
+        // already there.
+        let existing = await existingResearchUUIDs(in: spaceID)
+        let session = try await SpaceResearchService.start(spaceID: spaceID, question: title)
+
+        var created: [String] = []
+        if !existing.contains(session.uuid) { created.append(session.uuid) }
+        let questionUUID = session.inquirySessionMetadata?.mainQuestionUUID
+        let profileUUID = session.inquirySessionMetadata?.parentDeepDiveUUID
+        if let questionUUID, !existing.contains(questionUUID) { created.append(questionUUID) }
+        if let profileUUID, !existing.contains(profileUUID) { created.append(profileUUID) }
+
+        // The raw capture often carries more than the cleaned question —
+        // keep it as the session's first note instead of throwing words away.
+        if normalizedText(item.rawText) != normalizedText(title) {
+            if let note = try? await InquiryRepository.shared.createExtract(
+                body: item.rawText,
+                kind: .note,
+                sourceUUID: nil,
+                selectionRange: nil,
+                sessionUUID: session.uuid,
+                questionUUID: questionUUID,
+                deepDiveUUID: profileUUID,
+                branchNodeId: nil,
+                sourceTabId: nil,
+                userNote: nil,
+                originType: "inboxAtlasRoute",
+                citation: nil
+            ) {
+                created.append(note.uuid)
+                await reindex(atom: note)
+            }
+        }
+
+        let provenance = captureProvenance(for: item)
+        _ = try? await atomRepo.update(uuid: session.uuid) { atom in
+            atom = atom.mergingMetadataKeys(provenance)
+        }
+        await adoptAttachments(from: item, into: session.uuid)
+        await reindex(atom: session)
+
+        let start = InquiryStart(
+            session: session,
+            spaceID: spaceID,
+            spaceName: spaceName,
+            createdAtomUUIDs: created,
+            createdSpaceID: createdSpaceID
         )
-        let questionTitle = item.title ?? String(item.rawText.prefix(120))
-        _ = try? await InquiryRepository.shared.findOrCreateQuestion(
-            title: questionTitle,
-            parentDeepDiveUUID: dive.uuid,
-            originSessionUUID: nil,
-            parentQuestionUUID: nil,
-            originExtractUUID: nil,
-            placementOrigin: "inbox-atlas"
+        let source = try await settlement(for: item)
+        try await settle(source, start: start)
+        await registerInquiryUndo(start: start, source: source)
+        NotificationCenter.default.post(name: CosmoNotification.Entity.updated, object: nil)
+        return start
+    }
+
+    /// Where a capture lives — the queue or a lane ledger — decides how it
+    /// settles and how undo puts it back. Lane captures arrive as proxies
+    /// (`captureRecordKind == "lane"`), so the verb never has to know.
+    private enum CaptureSettlement {
+        case inbox(InboxItem)
+        case lane(CapturedItem)
+    }
+
+    private func settlement(for item: InboxItem) async throws -> CaptureSettlement {
+        switch item.captureReference.kind {
+        case .inbox:
+            guard try await inboxRepo.fetch(uuid: item.uuid) != nil else { throw InboxPlacementError.unsupported }
+            return .inbox(item)
+        case .lane:
+            guard let row = try await CapturedItemRepository.shared.fetch(uuid: item.uuid) else { throw InboxPlacementError.unsupported }
+            return .lane(row)
+        }
+    }
+
+    /// Settle the capture as "became an inquiry": the queue row is actioned
+    /// with the honest outcome; a lane row is applied with the session in its
+    /// created-objects ledger and its inquiry parents stamped.
+    private func settle(_ source: CaptureSettlement, start: InquiryStart) async throws {
+        switch source {
+        case .inbox(let item):
+            try await inboxRepo.markActioned(uuid: item.uuid, outcome: "Inquiry started in \(start.spaceName)")
+        case .lane(let row):
+            try await CapturedItemRepository.shared.updateRouting(
+                uuid: row.uuid,
+                destinationId: row.captureDestinationId,
+                parsedCommand: row.parsedCommand,
+                parsedIntent: "lane_start_inquiry",
+                confidence: row.routingConfidence,
+                status: .applied,
+                createdObjectIds: row.createdObjectIds + [start.session.uuid],
+                parentDeepDiveId: start.session.inquirySessionMetadata?.parentDeepDiveUUID ?? row.parentDeepDiveId,
+                parentInquirySessionId: start.session.uuid,
+                parentQuestionId: start.session.inquirySessionMetadata?.mainQuestionUUID ?? row.parentQuestionId,
+                parentProjectId: row.parentProjectId
+            )
+            NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
+        }
+    }
+
+    /// The inverse of `settle` — the queue row comes back, or the lane row
+    /// returns to exactly the routing it had.
+    private func unsettle(_ source: CaptureSettlement) async {
+        switch source {
+        case .inbox(let item):
+            try? await inboxRepo.restore(item)
+        case .lane(let row):
+            try? await CapturedItemRepository.shared.updateRouting(
+                uuid: row.uuid,
+                destinationId: row.captureDestinationId,
+                parsedCommand: row.parsedCommand,
+                parsedIntent: row.parsedIntent,
+                confidence: row.routingConfidence,
+                status: row.status,
+                createdObjectIds: row.createdObjectIds,
+                parentDeepDiveId: row.parentDeepDiveId,
+                parentInquirySessionId: row.parentInquirySessionId,
+                parentQuestionId: row.parentQuestionId,
+                parentProjectId: row.parentProjectId
+            )
+            NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
+        }
+    }
+
+    /// Every research atom already attached to the Space's profiles — the
+    /// baseline `startInquiry` diffs against to know what it created.
+    private func existingResearchUUIDs(in spaceID: String) async -> Set<String> {
+        var uuids = Set<String>()
+        var profiles = (try? await InquiryRepository.shared.fetchDeepDives(in: spaceID)) ?? []
+        if let space = try? await atomRepo.fetch(uuid: spaceID),
+           let explicit = (try? SpaceResearchSchema.object(space.metadata))?["deepDiveProfileUUID"] as? String,
+           !profiles.contains(where: { $0.uuid == explicit }),
+           let profile = try? await atomRepo.fetch(uuid: explicit) {
+            profiles.append(profile)
+        }
+        for profile in profiles {
+            uuids.insert(profile.uuid)
+            for question in (try? await InquiryRepository.shared.fetchQuestions(forDeepDive: profile.uuid)) ?? [] {
+                uuids.insert(question.uuid)
+            }
+            for session in (try? await InquiryRepository.shared.fetchSessions(forDeepDive: profile.uuid)) ?? [] {
+                uuids.insert(session.uuid)
+            }
+        }
+        return uuids
+    }
+
+    /// Undo deletes exactly the atoms (and Space) the start created and puts
+    /// the capture back; redo restores those snapshots and re-settles it.
+    private func registerInquiryUndo(start: InquiryStart, source: CaptureSettlement) async {
+        var snapshots: [Atom] = []
+        for uuid in start.createdAtomUUIDs {
+            if let atom = try? await atomRepo.fetch(uuid: uuid) { snapshots.append(atom) }
+        }
+        let createdSpaceID = start.createdSpaceID
+        let createdUUIDs = start.createdAtomUUIDs
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: "Start Inquiry") { [weak self] in
+                guard let self else { return }
+                for uuid in createdUUIDs {
+                    try? await self.atomRepo.delete(uuid: uuid)
+                }
+                if let createdSpaceID {
+                    await ThinkspaceManager.shared.softDelete(createdSpaceID)
+                }
+                await self.unsettle(source)
+                NotificationCenter.default.post(name: CosmoNotification.Entity.updated, object: nil)
+            } redo: { [weak self] in
+                guard let self else { return }
+                if let createdSpaceID {
+                    await ThinkspaceManager.shared.restoreThinkspace(createdSpaceID)
+                }
+                for atom in snapshots {
+                    try? await self.restoreAtomSnapshot(atom)
+                    await self.reindex(atom: atom)
+                }
+                try? await self.settle(source, start: start)
+                NotificationCenter.default.post(name: CosmoNotification.Entity.updated, object: nil)
+            }
         )
-        // The capture's pages follow it into the new deep dive rather than
-        // being orphaned on the resolved inbox item.
-        await adoptAttachments(from: item, into: dive.uuid)
-        try await inboxRepo.markActioned(uuid: item.uuid)
-        registerCreationUndo(created: dive, item: item, actionDescription: "Germinate Deep Dive")
-        return dive
+    }
+
+    // MARK: - Move a queue capture into a lane (September 2026)
+
+    /// File a queued capture into a capture lane by a direct choice — the
+    /// inspector's "Move to lane" menu or the destination sheet. Builds the
+    /// lane ledger row exactly as the alias-prefix path does, carries the
+    /// capture's originals across (the lane ledger resolves pages by
+    /// `capturedItemId`), settles the queue row with the honest outcome, and
+    /// bumps the lane's recency. Undo archives the lane row, hands the
+    /// originals back, and restores the queue item — the iOS engine's
+    /// `route(item:toLane:)` contract, twin-for-twin.
+    @discardableResult
+    func executeRouteToLane(item: InboxItem, lane: CaptureDestination) async throws -> CapturedItem {
+        try await requireInboxSource(item)
+        let attachmentUUIDs = item.attachmentUUIDs
+
+        var row = CapturedItem.makeTelegram(rawText: item.rawText, caption: nil, chatId: "", messageId: nil)
+        row.source = .quickCapture
+        row.telegramChatId = nil
+        row.captureDestinationId = lane.uuid
+        row.parsedIntent = "inbox_move_to_lane"
+        row.status = .routed
+        row.routingConfidence = 1
+        if let data = try? JSONEncoder().encode(attachmentUUIDs) {
+            row.mediaAttachmentIdsJSON = String(data: data, encoding: .utf8)
+        }
+        var provenance: [String: Any] = ["captureSource": "mac", "movedFromInboxUUID": item.uuid]
+        if !attachmentUUIDs.isEmpty { provenance["attachmentUUIDs"] = attachmentUUIDs }
+        if let data = try? JSONSerialization.data(withJSONObject: provenance) {
+            row.provenanceMetadata = String(data: data, encoding: .utf8)
+        }
+        let saved = try await CapturedItemRepository.shared.create(row)
+
+        // The originals follow the capture into the lane. A failed re-own
+        // never fails the move — the thumbs still resolve by uuid.
+        var previousOwners: [(uuid: String, ownerType: String, ownerUUID: String, capturedItemId: String)] = []
+        for uuid in attachmentUUIDs {
+            if let attachment = try? await MediaAttachmentRepository.shared.fetch(uuid: uuid) {
+                previousOwners.append((uuid, attachment.ownerType, attachment.ownerUUID, attachment.capturedItemId))
+            }
+            _ = try? await MediaAttachmentRepository.shared.trackedMutation(uuid: uuid) { attachment in
+                attachment.ownerType = MediaAttachmentOwner.capturedItem.rawValue
+                attachment.ownerUUID = saved.uuid
+                attachment.capturedItemId = saved.uuid
+                return true
+            }
+        }
+
+        await CaptureDestinationRepository.shared.markUsed(uuid: lane.uuid)
+        try await inboxRepo.markActioned(uuid: item.uuid, outcome: "Moved to \(lane.name)")
+        Self.postLaneChanged(laneID: lane.uuid)
+
+        let originalItem = item
+        let owners = previousOwners
+        let laneName = lane.name
+        let savedUUID = saved.uuid
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: "Move Capture to Lane") { [weak self] in
+                guard let self else { return }
+                try? await Self.setLaneRowStatus(saved, to: .archived, intent: "inbox_move_to_lane_undo")
+                for owner in owners {
+                    _ = try? await MediaAttachmentRepository.shared.trackedMutation(uuid: owner.uuid) { attachment in
+                        attachment.ownerType = owner.ownerType
+                        attachment.ownerUUID = owner.ownerUUID
+                        attachment.capturedItemId = owner.capturedItemId
+                        return true
+                    }
+                }
+                try? await self.inboxRepo.restore(originalItem)
+                Self.postLaneChanged(laneID: lane.uuid)
+            } redo: { [weak self] in
+                guard let self else { return }
+                try? await Self.setLaneRowStatus(saved, to: .routed, intent: "inbox_move_to_lane")
+                for owner in owners {
+                    _ = try? await MediaAttachmentRepository.shared.trackedMutation(uuid: owner.uuid) { attachment in
+                        attachment.ownerType = MediaAttachmentOwner.capturedItem.rawValue
+                        attachment.ownerUUID = savedUUID
+                        attachment.capturedItemId = savedUUID
+                        return true
+                    }
+                }
+                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid, outcome: "Moved to \(laneName)")
+                Self.postLaneChanged(laneID: lane.uuid)
+            }
+        )
+        return saved
+    }
+
+    /// A status flip that keeps every other routing field as the row has it
+    /// (CaptureLanesViewModel's contract).
+    private static func setLaneRowStatus(_ row: CapturedItem, to status: CapturedItemStatus, intent: String) async throws {
+        try await CapturedItemRepository.shared.updateRouting(
+            uuid: row.uuid,
+            destinationId: row.captureDestinationId,
+            parsedCommand: row.parsedCommand,
+            parsedIntent: intent,
+            confidence: row.routingConfidence,
+            status: status,
+            createdObjectIds: row.createdObjectIds,
+            parentDeepDiveId: row.parentDeepDiveId,
+            parentInquirySessionId: row.parentInquirySessionId,
+            parentQuestionId: row.parentQuestionId,
+            parentProjectId: row.parentProjectId
+        )
+    }
+
+    private static func postLaneChanged(laneID: String) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Inbox.itemAdded,
+            object: nil,
+            userInfo: ["captureDestinationId": laneID]
+        )
+        NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
     }
 
     /// Shared undo shape for Atlas moves that created one primary atom:

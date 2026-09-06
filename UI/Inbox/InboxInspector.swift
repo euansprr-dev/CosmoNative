@@ -26,6 +26,10 @@ struct InboxInspector: View {
 
     @State private var appeared = false
     @State private var adjustedPosition: CGPoint?
+    /// "New Space…" from the inquiry menu — names the Space before the
+    /// inquiry starts inside it.
+    @State private var newSpacePrompt = false
+    @State private var newSpaceName = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // MARK: - Inline edit
@@ -74,6 +78,17 @@ struct InboxInspector: View {
             // Sync landed (this device's save, or the phone's edit) — adopt it
             // unless the user is mid-edit on this row.
             if !isEditing { displayText = newValue }
+        }
+        .alert("New Space", isPresented: $newSpacePrompt) {
+            TextField("Space name", text: $newSpaceName)
+            Button("Start inquiry") {
+                let name = newSpaceName
+                Task { await viewModel.startInquiry(item, in: .new(name: name)) }
+            }
+            .disabled(newSpaceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("A Space named for the topic, with this capture's inquiry started inside it.")
         }
     }
 
@@ -325,6 +340,12 @@ struct InboxInspector: View {
         if item.primaryRouteKindValue == .placeInThinkspace || item.primaryRouteKindValue == .placeInExistingCluster {
             return "Adds the Page to this destination. The canvas arrangement stays as it is."
         }
+        if item.primaryRouteKindValue == .startInquiry {
+            return "Starts a resumable inquiry in this Space with the capture as its question. Anything beyond the question becomes its first note."
+        }
+        if item.primaryRouteKindValue == .germinateDeepDive {
+            return "Creates a Space named for the topic and starts the inquiry inside it. Undo removes both."
+        }
         if let rationale = item.rationale, !rationale.isEmpty { return rationale }
         if let summary = item.placementPlanSummary, !summary.isEmpty { return summary }
         return nil
@@ -384,7 +405,30 @@ struct InboxInspector: View {
             HStack {
                 Menu {
                     Button("Create task", systemImage: "checkmark.circle") { Task { await viewModel.makeTask(item) } }
-                    Button("Start inquiry", systemImage: "questionmark.bubble") { Task { await viewModel.askInDeepDive(item) } }
+                    // Research gets a room: the capture becomes an inquiry
+                    // session inside a Space the user names — never a bare
+                    // question under whichever topic was touched last.
+                    Menu {
+                        ForEach(viewModel.inquirySpaces) { space in
+                            Button(space.name) { Task { await viewModel.startInquiry(item, in: .existing(space)) } }
+                        }
+                        if !viewModel.inquirySpaces.isEmpty { Divider() }
+                        Button("New Space…", systemImage: "plus") {
+                            newSpaceName = item.title ?? String(item.rawText.prefix(48))
+                            newSpacePrompt = true
+                        }
+                    } label: {
+                        Label("Start inquiry in", systemImage: "text.magnifyingglass")
+                    }
+                    if !viewModel.lanes.isEmpty {
+                        Menu {
+                            ForEach(viewModel.lanes, id: \.uuid) { lane in
+                                Button(lane.name, systemImage: lane.icon) { Task { await viewModel.moveToLane(item, lane: lane) } }
+                            }
+                        } label: {
+                            Label("Move to lane", systemImage: "tray.2")
+                        }
+                    }
                     Button("Save Content idea…", systemImage: "lightbulb") { viewModel.showOverride(for: item) }
                     if item.canBecomeSwipe {
                         Button("Save in Swipe", systemImage: item.predictedSwipeKind.iconName) { Task { await viewModel.fileAsSwipe(item) } }

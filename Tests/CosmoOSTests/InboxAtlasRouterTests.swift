@@ -445,11 +445,11 @@ final class InboxAtlasRouterTests: XCTestCase {
         XCTAssertEqual(InboxRouteKind.startSeedling.outcomeNoun(suggestedAtomType: "connection"), "New concept")
         XCTAssertEqual(InboxRouteKind.germinateConnection.outcomeNoun(suggestedAtomType: nil), "New concept")
         XCTAssertEqual(InboxRouteKind.feedSeedling.outcomeNoun(suggestedAtomType: "connection"), "Grows a concept")
-        XCTAssertEqual(InboxRouteKind.feedConnection.outcomeNoun(suggestedAtomType: "note"), "Develops a concept page")
-        XCTAssertEqual(InboxRouteKind.placeInThinkspace.outcomeNoun(suggestedAtomType: "note"), "Note on canvas")
-        XCTAssertEqual(InboxRouteKind.placeInExistingCluster.outcomeNoun(suggestedAtomType: "idea"), "Idea on canvas")
+        XCTAssertEqual(InboxRouteKind.feedConnection.outcomeNoun(suggestedAtomType: "note"), "Evidence for review")
+        XCTAssertEqual(InboxRouteKind.placeInThinkspace.outcomeNoun(suggestedAtomType: "note"), "Page in Space")
+        XCTAssertEqual(InboxRouteKind.placeInExistingCluster.outcomeNoun(suggestedAtomType: "idea"), "Page in Space")
         XCTAssertEqual(InboxRouteKind.createStandaloneAtom.outcomeNoun(suggestedAtomType: "idea"), "Idea")
-        XCTAssertEqual(InboxRouteKind.mergeAtom.outcomeNoun(suggestedAtomType: nil), "Merge")
+        XCTAssertEqual(InboxRouteKind.mergeAtom.outcomeNoun(suggestedAtomType: nil), "Attach reference")
         XCTAssertEqual(InboxRouteKind.attachClient.outcomeNoun(suggestedAtomType: "idea"), "Client idea")
         XCTAssertEqual(InboxRouteKind.spawnQuestion.outcomeNoun(suggestedAtomType: "idea"), "New question")
         XCTAssertEqual(InboxRouteKind.advanceQuestion.outcomeNoun(suggestedAtomType: "note"), "Answers a question")
@@ -458,14 +458,84 @@ final class InboxAtlasRouterTests: XCTestCase {
     func testPrimaryVerbLabelsPerKind() {
         XCTAssertEqual(InboxRouteKind.startSeedling.primaryVerbLabel, "Start concept")
         XCTAssertEqual(InboxRouteKind.feedSeedling.primaryVerbLabel, "Add to concept")
-        XCTAssertEqual(InboxRouteKind.feedConnection.primaryVerbLabel, "Stage")
+        XCTAssertEqual(InboxRouteKind.feedConnection.primaryVerbLabel, "Add for review")
         XCTAssertEqual(InboxRouteKind.advanceQuestion.primaryVerbLabel, "Answer")
         XCTAssertEqual(InboxRouteKind.spawnQuestion.primaryVerbLabel, "Ask")
-        XCTAssertEqual(InboxRouteKind.mergeAtom.primaryVerbLabel, "Merge")
+        XCTAssertEqual(InboxRouteKind.mergeAtom.primaryVerbLabel, "Attach reference")
         XCTAssertEqual(InboxRouteKind.placeInThinkspace.primaryVerbLabel, "Place")
         XCTAssertTrue(InboxRouteKind.startSeedling.isSeedlingKind)
         XCTAssertTrue(InboxRouteKind.germinateConnection.isSeedlingKind)
         XCTAssertFalse(InboxRouteKind.placeInThinkspace.isSeedlingKind)
+    }
+
+    // MARK: - Space inquiries (September 2026)
+
+    func testStartInquiryRequiresWorkspaceTargetAndTitle() {
+        let valid = parse("""
+        {"title":"Chronic stress","captureType":"question","moves":[{"kind":"startInquiry","targetKey":"thinkspace-TS1",
+        "newTitle":"How does chronic stress affect creativity?","growth":"Opens a room.","confidence":0.85}]}
+        """)
+        XCTAssertEqual(valid?.moves.count, 1)
+        XCTAssertEqual(valid?.moves.first?.kind, .startInquiry)
+        XCTAssertEqual(valid?.moves.first?.targetKey, "thinkspace-TS1")
+
+        // A research topic, cluster, or invented key is not a Space.
+        let wrongKind = parse("""
+        {"title":"T","captureType":"question","moves":[{"kind":"startInquiry","targetKey":"deepdive-D1",
+        "newTitle":"Q?","growth":"g","confidence":0.8}]}
+        """)
+        XCTAssertEqual(wrongKind?.moves.count, 0)
+
+        let noTitle = parse("""
+        {"title":"T","captureType":"question","moves":[{"kind":"startInquiry","targetKey":"thinkspace-TS1",
+        "newTitle":null,"growth":"g","confidence":0.8}]}
+        """)
+        XCTAssertEqual(noTitle?.moves.count, 0)
+    }
+
+    func testStartInquiryCountsAsTheOneCreationMove() {
+        let decision = parse("""
+        {"title":"T","captureType":"question","moves":[
+          {"kind":"startInquiry","targetKey":"thinkspace-TS1","newTitle":"Q?","growth":"g","confidence":0.8},
+          {"kind":"startSeedling","targetKey":null,"newTitle":"Constraints","growth":"g","confidence":0.7}]}
+        """)
+        XCTAssertEqual(decision?.moves.map(\.kind), [.startInquiry])
+    }
+
+    func testInquiryKindsSayWhatTheCaptureBecomes() {
+        XCTAssertEqual(InboxRouteKind.startInquiry.outcomeNoun(suggestedAtomType: "inquiry_session"), "Inquiry in Space")
+        XCTAssertEqual(InboxRouteKind.germinateDeepDive.outcomeNoun(suggestedAtomType: nil), "Inquiry in new Space")
+        XCTAssertEqual(InboxRouteKind.startInquiry.primaryVerbLabel, "Start inquiry")
+        XCTAssertEqual(InboxRouteKind.germinateDeepDive.primaryVerbLabel, "Start inquiry")
+        XCTAssertTrue(InboxRouteKind.startInquiry.isInquiryKind)
+        XCTAssertTrue(InboxRouteKind.spawnQuestion.isInquiryKind)
+        XCTAssertFalse(InboxRouteKind.fileAsSwipe.isInquiryKind)
+        XCTAssertEqual(InboxRouteKind.startInquiry.legacyClassification, .place)
+    }
+
+    func testAtlasMoveSpaceFieldsRoundTripAndTolerateAbsence() throws {
+        let recommendation = InboxRecommendation(
+            kind: .startInquiry,
+            confidence: 0.85,
+            suggestedAtomType: "inquiry_session",
+            destinationPath: "Health › Inquiry",
+            rationale: "Research gets a room.",
+            atlasMove: InboxAtlasMove(newQuestionTitle: "How does stress affect creativity?", spaceUUID: "TS1", spaceName: "Health")
+        )
+        let bundle = InboxRecommendationBundle(title: "T", recommendations: [recommendation])
+        let encoded = try XCTUnwrap(bundle.encodedJSONString)
+        let decoded = try JSONDecoder().decode(InboxRecommendationBundle.self, from: Data(encoded.utf8))
+        XCTAssertEqual(decoded.primaryRecommendation?.atlasMove?.spaceUUID, "TS1")
+        XCTAssertEqual(decoded.primaryRecommendation?.atlasMove?.spaceName, "Health")
+        XCTAssertEqual(decoded.primaryRecommendation?.atlasMove?.newQuestionTitle, "How does stress affect creativity?")
+
+        let legacy = """
+        {"bundleId":"b1","title":"Old","createdAt":"2026-07-01T00:00:00Z",
+         "recommendations":[{"id":"r1","kind":"spawnQuestion","confidence":0.7,"suggestedAtomType":"idea",
+         "destinationPath":"Discipline › new question","rationale":"r","atlasMove":{"deepDiveUUID":"D1"}}]}
+        """
+        let old = try JSONDecoder().decode(InboxRecommendationBundle.self, from: Data(legacy.utf8))
+        XCTAssertNil(old.primaryRecommendation?.atlasMove?.spaceUUID)
     }
 
     // MARK: - Atlas entry mechanics

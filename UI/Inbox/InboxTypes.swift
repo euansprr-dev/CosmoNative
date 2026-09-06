@@ -100,6 +100,40 @@ private func captureCountLine(for count: Int) -> String {
     count == 1 ? "1 capture" : "\(count) captures"
 }
 
+// MARK: - Destination sheet focus
+
+/// Which family of destinations the sheet opens on. Everything is always
+/// listed; focus only decides what the user sees first.
+enum InboxOverrideFocus: Equatable, Sendable {
+    case destinations
+    case inquiry
+    case lanes
+}
+
+// MARK: - Inquiry destinations
+
+/// A Space that can host an inquiry session — what the "Start inquiry in…"
+/// menus and the destination sheet list.
+struct InquirySpaceOption: Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+}
+
+/// Where a capture's inquiry should live: a Space the user already has, or
+/// a NEW Space named for the topic (the honest answer to "I have no Space
+/// for this yet").
+enum InquirySpaceChoice: Hashable, Sendable {
+    case existing(InquirySpaceOption)
+    case new(name: String)
+
+    var spaceName: String {
+        switch self {
+        case .existing(let option): return option.name
+        case .new(let name): return name
+        }
+    }
+}
+
 // MARK: - Inspector host
 
 /// Everything the floating capture inspector asks of its surface. The triage
@@ -114,7 +148,15 @@ protocol InboxInspectorHost {
     func placeAndGo(_ item: InboxItem) async
     func applyAlternate(_ item: InboxItem, recommendation: InboxRecommendation) async
     func makeTask(_ item: InboxItem) async
-    func askInDeepDive(_ item: InboxItem) async
+    /// Spaces that can host an inquiry, for the "Start inquiry in…" menus.
+    var inquirySpaces: [InquirySpaceOption] { get }
+    /// The capture becomes a resumable inquiry session inside a Space —
+    /// an existing one, or a new Space named for the topic.
+    func startInquiry(_ item: InboxItem, in choice: InquirySpaceChoice) async
+    /// Active capture lanes, for the "Move to lane" menus. Empty hides them.
+    var lanes: [CaptureDestination] { get }
+    /// The capture leaves the queue (or its current lane) for a lane.
+    func moveToLane(_ item: InboxItem, lane: CaptureDestination) async
     func fileAsIdea(_ item: InboxItem) async
     func fileAsSwipe(_ item: InboxItem) async
     /// True when at least one flow exists to add a step to. Gates the `→ Flow`
@@ -140,7 +182,7 @@ extension InboxRouteKind {
             return DS.orange
         case .feedConnection:
             return DS.entityConnection
-        case .advanceQuestion, .spawnQuestion, .germinateDeepDive:
+        case .advanceQuestion, .spawnQuestion, .germinateDeepDive, .startInquiry:
             return DS.entityResearch
         case .attachClient:
             return DS.entityIdea

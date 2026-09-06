@@ -16,7 +16,7 @@ struct PipelineCardActions {
     var unschedule: () -> Void = {}
     var bookSession: (Date) -> Void = { _ in }
     var assignClient: (String?) -> Void = { _ in }
-    var ship: () -> Void = {}
+    var export: () -> Void = {}
     var logPerformance: () -> Void = {}
     var archive: () -> Void = {}
     var restore: () -> Void = {}
@@ -28,6 +28,12 @@ struct PipelineBoardCard: View {
     let isCursor: Bool
     let clients: [PipelineClient]
     let actions: PipelineCardActions
+    var isSelected = false
+    var selectionCount = 0
+    var onSelect: () -> Void = {}
+    /// The wire payload for a drag from this card — the whole selection when
+    /// the card is part of one, so one gesture moves every chosen piece.
+    var dragString: () -> String = { "" }
 
     @State private var isHovered = false
 
@@ -58,29 +64,40 @@ struct PipelineBoardCard: View {
         .padding(.horizontal, DS.space10)
         .padding(.vertical, DS.space8)
         .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
-        // A piece is a document, so the card is paper — never a tinted wall.
-        // A missed date speaks through the date itself.
-        .background(DS.documentSurface, in: .rect(cornerRadius: DS.radiusMedium))
+        // A management object wears the theme's elevated surface (the Ideas
+        // card's exact chrome) — never paper: documentSurface stays white in
+        // every dark palette while DS.text flips light, so these cards were
+        // white-on-white in the dark themes. A missed date speaks through
+        // the date itself.
+        .background(isSelected ? DS.accentSoft.opacity(0.6) : DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusMedium))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .strokeBorder(isCursor ? DS.accent.opacity(0.55) : DS.palette.sepiaBorder, lineWidth: isCursor ? 1 : 0.5)
+                .strokeBorder(isCursor ? DS.focusRing : (isSelected ? DS.accent.opacity(0.5) : DS.commandChromeBorder),
+                              lineWidth: isCursor || isSelected ? 1.5 : 0.75)
         )
-        .shadow(color: .black.opacity(isHovered ? 0.08 : 0.04), radius: isHovered ? 6 : 3, y: 2)
+        .animation(ProMotionSprings.hover, value: isSelected)
+        .shadow(color: DS.text.opacity(isHovered ? 0.07 : 0.025), radius: isHovered ? 8 : 3, y: isHovered ? 3 : 1)
         .scaleEffect(isHovered ? 1.01 : 1)
         .animation(ProMotionSprings.hover, value: isHovered)
         .contentShape(.rect(cornerRadius: DS.radiusMedium))
         .onHover { isHovered = $0 }
-        .onTapGesture(count: 2) { actions.open() }
+        // Finder manners: click selects (⌘ toggles, ⇧ ranges), double-click opens.
+        .simultaneousGesture(TapGesture(count: 1).onEnded { onSelect() })
+        .simultaneousGesture(TapGesture(count: 2).onEnded { actions.open() })
         .onDrag {
             ShelfDragSession.shared.begin(color: clientTint)
-            return NSItemProvider(object: PipelineDropPayload.content(item.id).dragString as NSString)
+            let payload = dragString()
+            return NSItemProvider(object: (payload.isEmpty ? PipelineDropPayload.content(item.id).dragString : payload) as NSString)
+        } preview: {
+            PipelineDragPreview(title: item.title, count: isSelected ? max(1, selectionCount) : 1, tint: clientTint)
         }
         .contextMenu { PipelineCardMenu(item: item, clients: clients, actions: actions) }
         .help("\(item.atom.title ?? "Untitled") — double-click opens, Space previews")
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySummary)
-        .accessibilityAddTraits(isCursor ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAddTraits(isCursor || isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { actions.open() }
+        .accessibilityAction(named: "Select") { onSelect() }
     }
 
     /// Media routed onto the piece rides the top of the card, edge to edge.
@@ -168,6 +185,7 @@ struct PipelineBoardCard: View {
             verb("eye", "Preview (Space)") { actions.quickLook() }
             if column != .shipped {
                 verb("calendar.badge.plus", item.scheduledAt == nil ? "Plan publication…" : "Change publication date…") { actions.schedule() }
+                verb("square.and.arrow.up", "Export… (⌘E)") { actions.export() }
             } else {
                 verb("chart.bar", "Log performance…") { actions.logPerformance() }
             }
@@ -218,7 +236,7 @@ struct PipelineCardMenu: View {
             Button("Restore to Content", systemImage: "arrow.uturn.backward", action: actions.restore)
         }
         Menu {
-            ForEach(ContentProductionStage.allCases.filter { $0 != .published }) { phase in
+            ForEach(ContentProductionStage.allCases) { phase in
                 Button { actions.move(phase) } label: {
                     if phase == item.productionStage {
                         Label(phase.title, systemImage: "checkmark")
@@ -254,7 +272,10 @@ struct PipelineCardMenu: View {
             Button { actions.assignClient(nil) } label: { Text("No client") }
         } label: { Label("Assign Client", systemImage: "person.crop.circle") }
         Divider()
-        Button { actions.ship() } label: { Label("Record publication…", systemImage: "paperplane") }
+        Button { actions.export() } label: { Label("Export…", systemImage: "square.and.arrow.up") }
+        if !item.isShipped {
+            Button { actions.move(.published) } label: { Label("Mark Published", systemImage: "paperplane") }
+        }
         Button { actions.logPerformance() } label: { Label("Log Performance…", systemImage: "chart.bar") }
         Divider()
         if item.phase != .archived {
@@ -273,5 +294,61 @@ struct PipelineCardMenu: View {
             }
         }
         return days
+    }
+}
+
+// MARK: - Drag preview
+
+/// What the pointer carries: the piece's name on its paper and, for a
+/// multi-select, a count badge with a second sheet peeking out behind.
+struct PipelineDragPreview: View {
+    let title: String
+    let count: Int
+    let tint: Color
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if count > 1 {
+                sheet.opacity(0.75).offset(x: 6, y: 6)
+            }
+            HStack(spacing: DS.space8) {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(tint)
+                    .frame(width: 3, height: 18)
+                Text(title)
+                    .font(DS.callout.weight(.semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if count > 1 {
+                    Text("\(count)")
+                        .font(DS.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(DS.textOnAccent)
+                        .padding(.horizontal, DS.space8)
+                        .frame(height: 20)
+                        .background(DS.accent, in: .capsule)
+                }
+            }
+            .padding(.horizontal, DS.space10)
+            .frame(width: 240, height: 44)
+            .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusMedium))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                    .strokeBorder(DS.commandChromeBorder, lineWidth: 0.75)
+            )
+            .shadow(color: DS.text.opacity(0.12), radius: 10, y: 4)
+        }
+        .padding(DS.space8)
+        .accessibilityLabel(count > 1 ? "\(count) pieces" : title)
+    }
+
+    private var sheet: some View {
+        RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+            .fill(DS.surfaceElevated)
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                    .strokeBorder(DS.commandChromeBorder, lineWidth: 0.75)
+            )
+            .frame(width: 240, height: 44)
     }
 }

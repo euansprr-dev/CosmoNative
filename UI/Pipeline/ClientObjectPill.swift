@@ -38,7 +38,7 @@ struct ClientObjectPill: View {
             .clipShape(.capsule)
             .overlay(
                 Capsule().strokeBorder(
-                    isSelected ? tint.opacity(0.42) : DS.palette.sepiaBorder,
+                    isSelected ? tint.opacity(0.42) : DS.commandChromeBorder,
                     lineWidth: isSelected ? 1 : 0.5
                 )
             )

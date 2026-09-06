@@ -68,6 +68,7 @@ final class SeedlingRepository: ObservableObject {
             var mutable = seedling
             mutable.syncUpdatedAt = ISO8601.string(from: Date())
             try mutable.insert(db)
+            try CaptureSyncOutbox.enqueue(db, table: "seedlings", uuid: mutable.uuid)
             return mutable
         }
         await ChangeTracker.shared.trackInsert(table: Seedling.databaseTableName, entity: saved)
@@ -105,6 +106,7 @@ final class SeedlingRepository: ObservableObject {
             guard mutate(&seedling) else { return nil }
             Self.prepareTrackedUpdate(&seedling)
             try seedling.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "seedlings", uuid: seedling.uuid)
             return seedling
         }
         await track(updated)

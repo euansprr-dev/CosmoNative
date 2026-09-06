@@ -52,6 +52,7 @@ final class CaptureOverlayViewModel {
         enum UndoTarget {
             case inboxItem
             case swipeAtom
+            case laneCapture
         }
 
         enum State {
@@ -509,7 +510,8 @@ final class CaptureOverlayViewModel {
         captureText = ""
         laneAssist.reset()
 
-        if destination == .swipe {
+        let laneMatch = await LaneCaptureAssist.resolvedMatch(for: thought)
+        if destination == .swipe, laneMatch == nil {
             await sendStagedAsSwipe(staged, note: thought.isEmpty ? nil : thought)
             return
         }
@@ -536,18 +538,21 @@ final class CaptureOverlayViewModel {
         // A total failure keeps the thought — restore it, never drop the words.
         if case .failed = combined.outcome, combined.attachedCount == 0 {
             captureText = thought
+            stagedAttachments = staged
+            stagedDestination = destination
         }
         let display = thought.count > 40 ? "\u{201C}\(thought.prefix(40))…\u{201D}" : "\u{201C}\(thought)\u{201D}"
         var destinationLabel: String?
         if case .captured = combined.outcome {
-            destinationLabel = "→ Inbox · \(combined.attachedCount) attached"
+            destinationLabel = "→ \(laneMatch?.lane.name ?? "Inbox") · \(combined.attachedCount) attached"
         }
         sessionEntries.append(SessionEntry(
             displayName: display,
             kind: staged.first?.kind,
             state: state,
             fingerprint: nil,
-            destinationLabel: destinationLabel
+            destinationLabel: destinationLabel,
+            undoTarget: combined.laneItem == nil ? .inboxItem : .laneCapture
         ))
     }
 
@@ -762,13 +767,19 @@ final class CaptureOverlayViewModel {
     func ingestScanImages(_ images: [Data]) async {
         guard !images.isEmpty else { return }
         errorLine = nil
-        switch await InboxScanIngestService.shared.ingest(images: images) {
+        switch await InboxScanIngestService.shared.ingest(images: images, captureText: captureText) {
         case .captured(let item, let pageCount):
             sessionEntries.append(SessionEntry(
                 displayName: pageCount == 1 ? "Page scan" : "Page scan (\(pageCount) pages)",
                 kind: .pageScan,
                 state: .captured(itemUUID: item.uuid),
                 fingerprint: nil
+            ))
+        case .routedToLane(let item, let pageCount):
+            sessionEntries.append(SessionEntry(
+                displayName: pageCount == 1 ? "Page scan" : "Page scan (\(pageCount) pages)",
+                kind: .pageScan, state: .captured(itemUUID: item.uuid), fingerprint: nil,
+                destinationLabel: "→ \(item.parsedCommand ?? "Lane")", undoTarget: .laneCapture
             ))
         case .failed(let detail):
             errorLine = "Couldn't digitize the scan — \(detail)"
@@ -808,6 +819,19 @@ final class CaptureOverlayViewModel {
             switch entry.undoTarget {
             case .inboxItem:
                 try await InboxRepository.shared.dismiss(uuid: uuid)
+            case .laneCapture:
+                if let item = try await CapturedItemRepository.shared.fetch(uuid: uuid) {
+                    try await CapturedItemRepository.shared.updateRouting(
+                        uuid: uuid, destinationId: item.captureDestinationId,
+                        parsedCommand: item.parsedCommand, parsedIntent: item.parsedIntent,
+                        confidence: item.routingConfidence, status: .archived,
+                        createdObjectIds: item.createdObjectIds,
+                        parentDeepDiveId: item.parentDeepDiveId,
+                        parentInquirySessionId: item.parentInquirySessionId,
+                        parentQuestionId: item.parentQuestionId,
+                        parentProjectId: item.parentProjectId
+                    )
+                }
             case .swipeAtom:
                 try await AtomRepository.shared.delete(uuid: uuid)
                 NotificationCenter.default.post(

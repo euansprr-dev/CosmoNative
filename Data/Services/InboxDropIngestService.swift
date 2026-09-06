@@ -96,6 +96,7 @@ final class InboxDropIngestService {
         let attachedCount: Int
         /// Files that couldn't be read or stored — reported, never silently dropped.
         let failedNames: [String]
+        var laneItem: CapturedItem? = nil
     }
 
     /// One typed thought plus its staged files as a SINGLE inbox capture —
@@ -150,18 +151,32 @@ final class InboxDropIngestService {
             )
         }
 
-        let outcome = await ingestText(
-            rawText: text, title: nil,
-            dropSessionId: dropSessionId, capturedFrom: capturedFrom,
-            attachmentUUIDs: drafts.map(\.attachmentId)
-        )
+        let laneItem: CapturedItem?
+        do {
+            laneItem = try await captureInLane(
+                text: text, fallbackText: drafts.count == 1 ? drafts[0].filename : "Attachments (\(drafts.count))",
+                attachmentUUIDs: drafts.map(\.attachmentId)
+            )
+        } catch {
+            return CombinedOutcome(outcome: .failed(error.localizedDescription), attachedCount: 0, failedNames: failedNames)
+        }
+        let outcome: DropCaptureResult.Outcome
+        if let laneItem {
+            outcome = .captured(itemUUID: laneItem.uuid)
+        } else {
+            outcome = await ingestText(
+                rawText: text, title: nil,
+                dropSessionId: dropSessionId, capturedFrom: capturedFrom,
+                attachmentUUIDs: drafts.map(\.attachmentId)
+            )
+        }
         guard case .captured(let itemUUID) = outcome else {
             return CombinedOutcome(outcome: outcome, attachedCount: 0, failedNames: failedNames)
         }
 
         for draft in drafts {
             var attachment = MediaAttachment.makeLocal(
-                owner: .inboxItem,
+                owner: laneItem == nil ? .inboxItem : .capturedItem,
                 ownerUUID: itemUUID,
                 kind: draft.kind,
                 localStoragePath: draft.media.originalPath,
@@ -191,8 +206,28 @@ final class InboxDropIngestService {
         return CombinedOutcome(
             outcome: .captured(itemUUID: itemUUID),
             attachedCount: drafts.count,
-            failedNames: failedNames
+            failedNames: failedNames,
+            laneItem: laneItem
         )
+    }
+
+    /// Photos and scans use the same explicit lane contract as text captures.
+    func captureInLane(text: String, fallbackText: String, attachmentUUIDs: [String]) async throws -> CapturedItem? {
+        guard let match = await LaneCaptureAssist.resolvedMatch(for: text) else { return nil }
+        let body = match.remainder.isEmpty ? fallbackText : match.remainder
+        var item = CapturedItem.makeTelegram(rawText: body, caption: nil, chatId: "", messageId: nil)
+        item.source = .quickCapture
+        item.telegramChatId = nil
+        item.captureDestinationId = match.lane.uuid
+        item.parsedCommand = match.alias
+        item.parsedIntent = "mac_capture_lane"
+        item.status = .routed
+        item.routingConfidence = 1
+        item.mediaAttachmentIdsJSON = String(data: try JSONEncoder().encode(attachmentUUIDs), encoding: .utf8)
+        item.provenanceMetadata = metadataJSON(["captureSource": "mac", "attachmentUUIDs": attachmentUUIDs])
+        let saved = try await CapturedItemRepository.shared.create(item)
+        await CaptureDestinationRepository.shared.markUsed(uuid: match.lane.uuid)
+        return saved
     }
 
     private struct StoredAttachmentDraft {

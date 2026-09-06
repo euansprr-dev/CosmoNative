@@ -93,12 +93,26 @@ struct SyncFailureResolution: Equatable {
 }
 
 enum SyncFailurePolicy {
+    /// Going offline is not a bad record. Pause the pass without spending
+    /// its retry budget or eventually dead-lettering an otherwise valid edit.
+    static func isTransientFailure(_ error: Error) -> Bool {
+        if let error = error as? URLError {
+            return [.notConnectedToInternet, .networkConnectionLost, .timedOut,
+                    .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
+                    .dataNotAllowed, .internationalRoamingOff, .cancelled].contains(error.code)
+        }
+        if let status = (error as? SupabaseError)?.statusCode {
+            return status == 429 || (500...599).contains(status)
+        }
+        return false
+    }
+
     static func resolve(
         currentRetryCount: Int,
         maxRetries: Int,
         error: Error
     ) -> SyncFailureResolution {
-        if error.isSupabaseQuotaExceeded || error.isSupabaseAuthOrPolicyRejected {
+        if error.isSupabaseQuotaExceeded || error.isSupabaseAuthOrPolicyRejected || isTransientFailure(error) {
             return SyncFailureResolution(
                 status: "pending",
                 retryCount: currentRetryCount,
@@ -125,7 +139,7 @@ extension SupabaseError {
              .updateFailed(let statusCode, _),
              .upsertFailed(let statusCode, _):
             return statusCode
-        case .invalidURL, .fetchFailed, .invalidResponse, .authRequired:
+        case .invalidURL, .fetchFailed, .invalidResponse, .authRequired, .missingRow:
             return nil
         }
     }
@@ -142,7 +156,7 @@ extension SupabaseError {
              .updateFailed(let statusCode, _),
              .upsertFailed(let statusCode, _):
             return statusCode == 401 || statusCode == 403
-        case .invalidURL, .fetchFailed, .invalidResponse:
+        case .invalidURL, .fetchFailed, .invalidResponse, .missingRow:
             return false
         }
     }

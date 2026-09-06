@@ -23,6 +23,10 @@ class ChangeTracker: ObservableObject {
             print("[SYNC] ⚠️ Cannot track entity without UUID")
             return
         }
+        if CaptureSyncOutbox.tables.contains(table) {
+            await pushCurrentCapture(table: table, uuid: uuid)
+            return
+        }
         ConsoleLog.verbose("trackInsert table=\(table) uuid=\(uuid)", subsystem: .sync)
 
         // One encode serves both the offline queue row and the immediate push.
@@ -55,6 +59,10 @@ class ChangeTracker: ObservableObject {
         skipVersionIncrement: Bool = false
     ) async {
         guard let uuid = entity.getUUID() else { return }
+        if CaptureSyncOutbox.tables.contains(table) {
+            await pushCurrentCapture(table: table, uuid: uuid)
+            return
+        }
         ConsoleLog.verbose("trackUpdate table=\(table) uuid=\(uuid) changedFields=\(changedFields ?? ["all"]) skipVersionIncrement=\(skipVersionIncrement)", subsystem: .sync)
 
         // One encode serves both the offline queue row and the immediate push.
@@ -75,6 +83,21 @@ class ChangeTracker: ObservableObject {
 
         // Fire-and-forget immediate push to Supabase
         immediatePush(table: table, uuid: uuid, encodedEntity: encoded, operation: "UPDATE")
+    }
+
+    private func pushCurrentCapture(table: String, uuid: String) async {
+        do {
+            let current = try await database.asyncWrite { db in
+                try CaptureSyncOutbox.enqueue(db, table: table, uuid: uuid)
+            }
+            guard current != nil else { return }
+            guard SupabaseSyncTrafficPolicy.allowsNetworkSync else { return }
+            // One uploader owns capture writes; an older immediate request
+            // must not land after a newer batch and overwrite its content.
+            SyncEngine.shared.requestCapturePush()
+        } catch {
+            PersistenceHealth.note(.syncFailure, context: "ChangeTracker.capture(\(uuid.prefix(8)))", detail: String(describing: error))
+        }
     }
 
     // MARK: - Track Delete
@@ -174,17 +197,10 @@ class ChangeTracker: ObservableObject {
                 }
             }
 
-            let writeDisposition: SyncWriteDisposition
-            if table == "atoms" {
-                writeDisposition = SyncWriteDisposition.resolve(
-                    requestedOperation: operation,
-                    serverVersion: serverVersion
-                )
-            } else if operation == "INSERT" {
-                writeDisposition = .upsert
-            } else {
-                writeDisposition = .update
-            }
+            let writeDisposition: SyncWriteDisposition = SyncWriteDisposition.resolve(
+                requestedOperation: operation,
+                serverVersion: serverVersion
+            )
 
             nonisolated(unsafe) let preparedPayload = payload
             await Self.performPush(

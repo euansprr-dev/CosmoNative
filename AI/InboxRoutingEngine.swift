@@ -374,13 +374,32 @@ actor InboxRoutingEngine {
                     )
                 ))
 
+            case .startInquiry:
+                // The Space rides the atlas move, NEVER placeThinkspaceId —
+                // an inquiry suggestion must not read as a canvas placement
+                // to the offline/iOS fallbacks (the "suggestion ≠ routing" law).
+                guard let key = move.targetKey, let entry = entriesByKey[key],
+                      let question = move.newTitle else { continue }
+                results.append(InboxRecommendation(
+                    kind: .startInquiry,
+                    confidence: move.confidence,
+                    suggestedAtomType: AtomType.inquirySession.rawValue,
+                    destinationPath: "\(entry.name) › Inquiry",
+                    rationale: rationale,
+                    atlasMove: InboxAtlasMove(
+                        newQuestionTitle: question,
+                        spaceUUID: entry.uuid,
+                        spaceName: entry.name
+                    )
+                ))
+
             case .germinateDeepDive:
                 guard let newTitle = move.newTitle else { continue }
                 results.append(InboxRecommendation(
                     kind: .germinateDeepDive,
                     confidence: move.confidence,
-                    suggestedAtomType: AtomType.idea.rawValue,
-                    destinationPath: "New deep dive: \(newTitle)",
+                    suggestedAtomType: AtomType.inquirySession.rawValue,
+                    destinationPath: "New Space: \(newTitle) › Inquiry",
                     rationale: rationale,
                     atlasMove: InboxAtlasMove(germinateTitle: newTitle)
                 ))

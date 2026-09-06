@@ -184,6 +184,19 @@ struct PlatformBrandMark: View {
                         )
                         .frame(maxHeight: .infinity)
                 }
+            case "linkedin":
+                // The "in" tile: filled rounded square, knocked-out wordmark.
+                GeometryReader { proxy in
+                    let s = proxy.size.width
+                    RoundedRectangle(cornerRadius: s * 0.22, style: .continuous)
+                        .fill(color)
+                        .overlay(
+                            Text("in")
+                                .font(.system(size: s * 0.66, weight: .bold, design: .rounded))
+                                .foregroundStyle(.background)
+                                .offset(y: -s * 0.03)
+                        )
+                }
             case "tiktok":
                 Image(systemName: "music.note")
                     .font(.system(size: size * 0.9, weight: .semibold))

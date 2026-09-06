@@ -50,6 +50,7 @@ struct CompanionAssistantDock: View {
             coordinator.reconcilePane(isOpen: hasAssistantPane, windowNumber: windowNumber)
         })
         .onChange(of: hasAssistantPane) { _, open in coordinator.reconcilePane(isOpen: open, windowNumber: windowNumber) }
+        .onChange(of: isSuppressed) { _, suppressed in if suppressed { CompanionDockMetrics.shared.footprint = .zero } }
         .sheet(isPresented: $showWorld) { CompanionPickerPopover() }
         .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: coordinator.host)
     }
@@ -108,6 +109,11 @@ struct CompanionAssistantDock: View {
             Button("Hide entrance · use ⌥A") { coordinator.showsEntrance = false }
         }
         .id(coordinator.appearanceRevision)
+        // The corner's neighbours (canvas zoom controls, panel tails) keep
+        // clear of this footprint. The quick chat replaces the launcher in
+        // place, so the reservation holds while it is open.
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { CompanionDockMetrics.shared.footprint = $0 }
+        .onDisappear { if coordinator.host != .compact { CompanionDockMetrics.shared.footprint = .zero } }
     }
 
     private var hasAssistantPane: Bool {

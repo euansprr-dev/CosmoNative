@@ -600,12 +600,12 @@ struct CanvasView: View {
                 }
             ))
             .overlay(alignment: .bottomTrailing) {
-                Group {
+                // The companion owns the corner; the controls keep clear of it.
+                CompanionCornerClearance(basePadding: 20) {
                     if compositionSession != nil { scopedCanvasControls }
                     else { zoomIndicator }
                 }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 20)
+                .padding(.bottom, 20)
             }
             .overlay(alignment: .bottomLeading) {
                 CanvasLiveTransformReader(viewportState: viewportState) { liveTransform in

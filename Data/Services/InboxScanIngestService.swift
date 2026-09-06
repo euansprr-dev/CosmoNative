@@ -18,6 +18,7 @@ final class InboxScanIngestService {
 
     enum Outcome {
         case captured(InboxItem, pageCount: Int)
+        case routedToLane(CapturedItem, pageCount: Int)
         case failed(String)
     }
 
@@ -25,7 +26,7 @@ final class InboxScanIngestService {
     /// progress line instead of double-submitting.
     private(set) var isIngesting = false
 
-    func ingest(images: [Data]) async -> Outcome {
+    func ingest(images: [Data], captureText: String = "") async -> Outcome {
         guard !images.isEmpty else { return .failed("No images to scan") }
         isIngesting = true
         defer { isIngesting = false }
@@ -82,12 +83,31 @@ final class InboxScanIngestService {
         let metadataJSON = (try? JSONSerialization.data(withJSONObject: itemMetadata))
             .flatMap { String(data: $0, encoding: .utf8) }
 
-        let outcome = await InboxIngestService.shared.ingest(
-            .init(source: .quickCapture, rawText: rawText, metadata: metadataJSON)
-        )
-        guard case .enqueued(let item) = outcome else {
-            if case .failed(let detail) = outcome { return .failed(detail) }
-            return .failed("The capture was consumed by another system")
+        let laneItem: CapturedItem?
+        do {
+            let match = await LaneCaptureAssist.resolvedMatch(for: captureText)
+            let text = match.map { "\($0.alias): " + ([$0.remainder, rawText].filter { !$0.isEmpty }.joined(separator: "\n\n")) } ?? captureText
+            laneItem = try await InboxDropIngestService.shared.captureInLane(
+                text: text, fallbackText: rawText, attachmentUUIDs: pages.map(\.uuid)
+            )
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+        let inboxItem: InboxItem?
+        let ownerUUID: String
+        if let laneItem {
+            inboxItem = nil
+            ownerUUID = laneItem.uuid
+        } else {
+            let outcome = await InboxIngestService.shared.ingest(
+                .init(source: .quickCapture, rawText: rawText, metadata: metadataJSON)
+            )
+            guard case .enqueued(let item) = outcome else {
+                if case .failed(let detail) = outcome { return .failed(detail) }
+                return .failed("The capture was consumed by another system")
+            }
+            inboxItem = item
+            ownerUUID = item.uuid
         }
 
         // The originals, owned by the capture they became.
@@ -112,8 +132,8 @@ final class InboxScanIngestService {
                 .flatMap { String(data: $0, encoding: .utf8) }
 
             var attachment = MediaAttachment.makeLocal(
-                owner: .inboxItem,
-                ownerUUID: item.uuid,
+                owner: laneItem == nil ? .inboxItem : .capturedItem,
+                ownerUUID: ownerUUID,
                 kind: .pageScan,
                 localStoragePath: page.stored.originalPath,
                 thumbnailPath: page.stored.thumbnailPath,
@@ -133,6 +153,8 @@ final class InboxScanIngestService {
         }
         AttachmentCloudStore.kick()
 
-        return .captured(item, pageCount: pages.count)
+        if let laneItem { return .routedToLane(laneItem, pageCount: pages.count) }
+        guard let inboxItem else { return .failed("Missing capture") }
+        return .captured(inboxItem, pageCount: pages.count)
     }
 }

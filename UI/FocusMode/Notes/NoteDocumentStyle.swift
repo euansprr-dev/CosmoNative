@@ -178,6 +178,12 @@ struct NoteDocumentStyle: Codable, Equatable {
                 return [Color(hex: darkMode ? "31373D" : "C9D2DA"), Color(hex: darkMode ? "22262A" : "EDF1F4").opacity(0)]
             }
         }
+
+        /// The wash's one color. Every renderer fades it to paper through
+        /// `PageCoverWash`, so the Page, its card and its tile match.
+        func washColor(tone: PaperTone, darkMode: Bool) -> Color? {
+            gradientColors(tone: tone, darkMode: darkMode)?.first
+        }
     }
 
     enum LineSpacing: String, Codable, CaseIterable, Identifiable {

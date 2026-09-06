@@ -267,18 +267,20 @@ struct NoteBlockView: View {
 
             noteFooter
         }
-        .padding(.top, 78)
+        .padding(.top, noteDocumentStyle.pageIcon == nil ? 78 : 108)
         .padding(.horizontal, 56)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // Page personality — the card is a faithful miniature of the page:
-        // cover band across the top edge (under the drag chrome), page icon
-        // above the title. Style arrives live via the GRDB observation.
+        // the cover wash pours from the top edge and fades into the paper
+        // behind the title, the way it does behind the Page's own; the seated
+        // page mark sits above the title. Style arrives live via the GRDB
+        // observation.
         .background(alignment: .top) {
             NotePageCoverBand(
                 style: noteDocumentStyle,
                 darkMode: DS.palette.isDark,
-                height: 64
+                height: 300
             )
             .allowsHitTesting(false)
         }
@@ -288,10 +290,11 @@ struct NoteBlockView: View {
                     icon: pageIcon,
                     style: noteDocumentStyle,
                     darkMode: DS.palette.isDark,
-                    size: 26
+                    size: 30,
+                    seated: true
                 )
                 .padding(.leading, 56)
-                .padding(.top, 44)
+                .padding(.top, 48)
                 .allowsHitTesting(false)
             }
         }

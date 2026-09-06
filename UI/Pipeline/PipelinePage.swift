@@ -19,6 +19,9 @@ struct PipelinePage: View {
     /// Retained workspace pages each keep their own lens over the shared model.
     var displayView: PipelineView? = nil
     var isActive = true
+    /// The workspace's Board‖List choice, rendered in this page's own filter
+    /// rail (a view mode is a switcher, never a menu). nil = host decides.
+    var layout: Binding<Bool>? = nil
     private var currentView: PipelineView { displayView ?? model.view }
 
     @State private var searchFocused = false
@@ -42,6 +45,8 @@ struct PipelinePage: View {
                 // Inside a host that already scrolls (a client hub, a space's
                 // Board view): flow in place — never a scroll inside a scroll.
                 embeddedContent
+            } else if workspace && currentView == .calendar {
+                viewportContent
             } else {
                 scrollContent
             }
@@ -58,7 +63,7 @@ struct PipelinePage: View {
         .onDisappear { if !embedded && !workspace { model.stop() } }
         .onChange(of: isActive) { _, active in
             pageFocused = active
-            if !active { searchFieldFocused = false; bulkScheduleRequested = false; model.quickLookID = nil }
+            if !active { searchFieldFocused = false; bulkScheduleRequested = false; model.quickLookID = nil; model.pendingExport = nil }
         }
         .onChange(of: currentView) { _, _ in clearTransientState() }
         .onChange(of: model.scope) { _, _ in clearTransientState() }
@@ -78,7 +83,9 @@ struct PipelinePage: View {
                     content
                 }
                 .padding(.horizontal, embedded ? 0 : DS.space32)
-                .padding(.top, embedded ? DS.space8 : 36)
+                // Filters ride the masthead: under the workspace header the
+                // rail keeps a section gap, not a page gap.
+                .padding(.top, embedded ? DS.space8 : (workspace ? DS.space20 : 36))
                 .padding(.bottom, 72)
             }
             .scrollEdgeEffectStyle(.soft, for: .all)
@@ -106,6 +113,25 @@ struct PipelinePage: View {
             headerGroup
             content
         }
+        .focusable()
+        .focusEffectDisabled()
+        .focused($pageFocused)
+        .onMoveCommand { direction in moveCursor(direction) }
+        .onKeyPress(.return) { openCursor() ? .handled : .ignored }
+        .onKeyPress(.space) { quickLookCursor() ? .handled : .ignored }
+        .onKeyPress(.delete) { archiveSelection() ? .handled : .ignored }
+    }
+
+    /// The calendar is a viewport, not a page: the month fills the height and
+    /// the shelf scrolls inside its own bounds — never the whole page.
+    private var viewportContent: some View {
+        VStack(alignment: .leading, spacing: DS.space20) {
+            headerGroup
+            content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .padding(.horizontal, DS.space32)
+        .padding(.top, DS.space20)
+        .padding(.bottom, DS.space20)
         .focusable()
         .focusEffectDisabled()
         .focused($pageFocused)
@@ -226,6 +252,8 @@ struct PipelinePage: View {
             }
             .menuStyle(.borderlessButton).fixedSize().font(DS.callout)
             .help("Content filters and display options")
+            Spacer(minLength: 0)
+            layoutSwitcher
         }
     }
 
@@ -241,15 +269,27 @@ struct PipelinePage: View {
             .help("Find in content (⌘F)")
             platformMenu
             formatMenu
-            if currentView == .list {
-                archivedToggle
-                Spacer(minLength: DS.space8)
-                sortMenu
-            } else {
-                Spacer(minLength: 0)
-            }
+            if currentView == .list { archivedToggle }
+            Spacer(minLength: DS.space8)
+            if currentView == .list { sortMenu }
+            layoutSwitcher
         }
         .animation(ProMotionSprings.gentle, value: currentView)
+    }
+
+    /// Board‖List is a view mode, so it speaks the one switcher voice — docked
+    /// at the rail's trailing edge, never a menu in the masthead.
+    @ViewBuilder private var layoutSwitcher: some View {
+        if let layout, currentView != .calendar {
+            CosmoSegmentedSwitcher(
+                options: [PipelineView.board, .list],
+                label: { $0.title }, icon: { $0.cosmoIcon },
+                help: { $0 == .board ? "Board — stages as columns" : "List — every piece as a ledger" },
+                selection: Binding(get: { layout.wrappedValue ? .list : .board }, set: { layout.wrappedValue = $0 == .list })
+            )
+            .fixedSize()
+            .accessibilityLabel("Pipeline layout")
+        }
     }
 
     private var platformMenu: some View {
@@ -370,6 +410,8 @@ struct PipelinePage: View {
             PipelineBoardView(
                 model: model,
                 cursorID: $cursorID,
+                selection: $selection,
+                selectionAnchor: $selectionAnchor,
                 onOpen: { model.open($0) },
                 onOpenAsPane: { model.openAsPane($0) },
                 onQuickLook: { model.quickLookID = $0 }
@@ -433,6 +475,10 @@ struct PipelinePage: View {
             )
             .zIndex(10)
         }
+        if let atom = model.pendingExport {
+            ContentExportOverlay(atom: atom, draft: atom.body ?? "", onClose: { model.pendingExport = nil })
+                .zIndex(11)
+        }
         Color.clear
             .frame(width: 1, height: 1)
             .popover(item: Binding(get: { model.pendingSchedule }, set: { model.pendingSchedule = $0 })) { item in
@@ -448,9 +494,6 @@ struct PipelinePage: View {
                         model.schedule(item.id, on: nil)
                     }
                 )
-            }
-            .sheet(item: Binding(get: { model.pendingShip }, set: { model.pendingShip = $0 })) { atom in
-                ContentExportSheet(atom: atom, draft: atom.body ?? "", onClose: { model.pendingShip = nil })
             }
             .sheet(item: Binding(get: { model.pendingPerf }, set: { model.pendingPerf = $0 })) { atom in
                 ContentPerfEntrySheet(atom: atom, onClose: { model.pendingPerf = nil })
@@ -468,9 +511,11 @@ struct PipelinePage: View {
             }
     }
 
+    /// The list shows the bar for any selection; the board only once there is
+    /// a group to act on (a single card's verbs live on the card).
     @ViewBuilder
     private var bulkBar: some View {
-        if currentView == .list, !selection.isEmpty {
+        if !selection.isEmpty, currentView == .list || (currentView == .board && selection.count > 1) {
             PipelineBulkBar(
                 count: selection.count,
                 clients: model.clients,
@@ -500,6 +545,7 @@ struct PipelinePage: View {
                 Button("") { switchView(.list) }.keyboardShortcut("3", modifiers: .command)
             }
             Button("") { selectAll() }.keyboardShortcut("a", modifiers: .command)
+            Button("") { exportCursor() }.keyboardShortcut("e", modifiers: .command)
             Button("") { stepCursorStage(forward: true) }.keyboardShortcut(.rightArrow, modifiers: .command)
             Button("") { stepCursorStage(forward: false) }.keyboardShortcut(.leftArrow, modifiers: .command)
         }
@@ -526,11 +572,14 @@ struct PipelinePage: View {
         selection.removeAll()
         selectionAnchor = nil
         model.quickLookID = nil
+        model.pendingExport = nil
     }
 
     private func handleEscape() {
         guard isActive else { return }
-        if model.quickLookID != nil {
+        if model.pendingExport != nil {
+            model.pendingExport = nil
+        } else if model.quickLookID != nil {
             model.quickLookID = nil
         } else if !selection.isEmpty {
             withAnimation(ProMotionSprings.snappy) { selection.removeAll() }
@@ -563,10 +612,21 @@ struct PipelinePage: View {
     }
 
     private func selectAll() {
-        guard currentView == .list else { return }
         withAnimation(ProMotionSprings.snappy) {
-            selection = Set(model.listRows.map(\.id))
+            switch currentView {
+            case .list: selection = Set(model.listRows.map(\.id))
+            case .board: selection = Set(model.snapshot.cursorOrder.flatMap { $0 }.compactMap { PipelineDropPayload.parse($0)?.uuid })
+            case .calendar: break
+            }
         }
+    }
+
+    /// ⌘E — the deliberate export for the cursored piece.
+    private func exportCursor() {
+        guard let cursorID else { return }
+        let uuid = PipelineDropPayload.parse(cursorID)?.uuid ?? cursorID
+        guard model.item(uuid) != nil else { return }
+        Task { model.pendingExport = try? await AtomRepository.shared.fetch(uuid: uuid) }
     }
 
     // MARK: Cursor
@@ -602,7 +662,19 @@ struct PipelinePage: View {
         default:
             break
         }
-        if currentView == .list, let cursorID { selection = [cursorID]; selectionAnchor = cursorID }
+        // The cursor IS the selection (⇧ extends it from the anchor) on both
+        // the ledger and the board.
+        guard currentView != .calendar, let cursorID else { return }
+        let uuid = PipelineDropPayload.parse(cursorID)?.uuid ?? cursorID
+        if NSApp.currentEvent?.modifierFlags.contains(.shift) == true, let anchor = selectionAnchor {
+            let order = sections.flatMap { $0 }.map { PipelineDropPayload.parse($0)?.uuid ?? $0 }
+            if let a = order.firstIndex(of: anchor), let b = order.firstIndex(of: uuid) {
+                selection = Set(order[min(a, b)...max(a, b)])
+            }
+        } else {
+            selection = [uuid]
+            selectionAnchor = uuid
+        }
     }
 
     private func openCursor() -> Bool {
@@ -622,7 +694,7 @@ struct PipelinePage: View {
     }
 
     private func archiveSelection() -> Bool {
-        guard currentView == .list, !selection.isEmpty else { return false }
+        guard currentView != .calendar, !selection.isEmpty else { return false }
         model.archive(Array(selection))
         selection.removeAll()
         return true
@@ -639,7 +711,10 @@ struct PipelinePage: View {
         let targetIndex = forward ? index + 1 : index - 1
         guard columns.indices.contains(targetIndex) else { return }
         let target = columns[targetIndex]
-        if target == .shipped { model.pendingShip = item.atom }
-        else { model.move(uuid, to: target.stage) }
+        // A selection that includes the cursored card moves as one.
+        let batch = selection.contains(uuid) && selection.count > 1 ? Array(selection) : [uuid]
+        if target == .shipped { model.publish(batch) }
+        else if batch.count == 1 { model.move(uuid, to: target.stage) }
+        else { model.bulkMove(batch, to: target.stage) }
     }
 }

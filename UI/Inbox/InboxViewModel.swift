@@ -77,8 +77,8 @@ final class InboxViewModel {
         captureError = nil
         isScanIngesting = true
         defer { isScanIngesting = false }
-        switch await InboxScanIngestService.shared.ingest(images: images) {
-        case .captured:
+        switch await InboxScanIngestService.shared.ingest(images: images, captureText: captureText) {
+        case .captured, .routedToLane:
             showCaptureConfirmation = true
             Task {
                 try? await Task.sleep(for: .seconds(1.5))
@@ -99,6 +99,23 @@ final class InboxViewModel {
             let ext = (file.filename as NSString).pathExtension
             let type = UTType(filenameExtension: ext) ?? .image
             return .data(file.data, type: type, suggestedName: file.filename)
+        }
+        let text = captureText
+        if await LaneCaptureAssist.resolvedMatch(for: text) != nil {
+            let result = await InboxDropIngestService.shared.ingestCombined(text: text, attachments: payloads)
+            if case .failed(let detail) = result.outcome {
+                captureError = "Couldn't attach — \(detail)"
+            } else if !result.failedNames.isEmpty {
+                captureError = "Couldn't attach \(result.failedNames.joined(separator: ", "))"
+            } else {
+                if captureText == text { captureText = "" }
+                showCaptureConfirmation = true
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    showCaptureConfirmation = false
+                }
+            }
+            return
         }
         let results = await InboxDropIngestService.shared.ingest(payloads)
         let failure = results.compactMap { result -> String? in
@@ -135,6 +152,34 @@ final class InboxViewModel {
     var overrideItem: InboxItem?
     var showOverrideSheet: Bool = false
     var overrideSearchResults: [HybridSearchEngine.SearchResult] = []
+    /// Which destination family the sheet opens on — the A verb lands on
+    /// inquiries, the row menu's "Move to lane…" on lanes.
+    var overrideFocus: InboxOverrideFocus = .destinations
+
+    // MARK: - Lanes & inquiry Spaces (September 2026)
+
+    /// Active capture lanes — the "Move to lane" menus and the destination
+    /// sheet's Lanes section. Refreshed on start and on every lane change.
+    private(set) var lanes: [CaptureDestination] = []
+
+    /// A route the view should adopt (the toast's "Open" after a move to a
+    /// lane). The view applies it and clears it.
+    var pendingRoute: SidebarInboxRoute?
+
+    /// Every Space that can host an inquiry session, sidebar order.
+    var inquirySpaces: [InquirySpaceOption] {
+        ThinkspaceManager.shared.thinkspaces
+            .filter { $0.id != ThinkspaceManager.commandCenterUUID }
+            .map { InquirySpaceOption(id: $0.id, name: $0.name) }
+    }
+
+    private func refreshLanes() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let active = (try? await self.destinationRepo.fetchActive()) ?? []
+            if active != self.lanes { self.lanes = active }
+        }
+    }
 
     // MARK: - Processing
 
@@ -210,6 +255,7 @@ final class InboxViewModel {
         hasStarted = true
         startObserving()
         refreshFlowAvailability()
+        refreshLanes()
     }
 
     private func refreshFlowAvailability() {
@@ -236,6 +282,7 @@ final class InboxViewModel {
             .sink { [weak self] _ in
                 Task { @MainActor in
                     self?.loadEmptyStateData()
+                    self?.refreshLanes()
                 }
             }
             .store(in: &cancellables)
@@ -355,7 +402,7 @@ final class InboxViewModel {
     /// (spatial placements are plentiful; knowledge-graph moves are the signal).
     private static let atlasMoveKinds: Set<InboxRouteKind> = [
         .advanceQuestion, .spawnQuestion, .feedConnection,
-        .attachClient, .germinateConnection, .germinateDeepDive,
+        .attachClient, .germinateConnection, .germinateDeepDive, .startInquiry,
         .feedSeedling, .startSeedling
     ]
 
@@ -658,43 +705,109 @@ final class InboxViewModel {
         }
     }
 
-    /// A — the capture is a question: spin it into the most recent Deep Dive's
-    /// inquiry queue, closing the capture → inquiry loop.
-    func askInDeepDive(_ item: InboxItem) async {
+    /// A — the capture is something to research: it becomes a resumable
+    /// inquiry session inside a Space (an existing one, or a new Space named
+    /// for the topic). The old verb filed a bare question under whichever
+    /// deep dive was touched last — the "stuck with nowhere to research"
+    /// gap this closes.
+    func startInquiry(_ item: InboxItem, in choice: InquirySpaceChoice) async {
         guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
-            let deepDives = ((try? await atomRepo.fetchAll(type: .deepDive)) ?? [])
-                .filter { !$0.isDeleted }
-                .sorted { $0.updatedAt > $1.updatedAt }
-            let target = deepDives.first
-
-            let question = try await InquiryRepository.shared.createQuestion(
-                title: item.title ?? String(item.rawText.prefix(120)),
-                parentDeepDiveUUID: target?.uuid,
-                originSessionUUID: nil,
-                parentQuestionUUID: nil,
-                originExtractUUID: nil
-            )
-
-            if var deepDive = target {
-                deepDive = deepDive.appendingLink(AtomLink(
-                    type: AtomLinkType.deepDiveQuestion.rawValue,
-                    uuid: question.uuid,
-                    entityType: AtomType.question.rawValue
-                ))
-                _ = try? await atomRepo.update(deepDive)
+            let start: InboxActionExecutor.InquiryStart?
+            switch choice {
+            case .existing(let space):
+                start = try await executor.executeStartInquiry(item: item, spaceID: space.id, question: item.title)
+            case .new(let name):
+                start = try await executor.executeStartInquiryInNewSpace(item: item, spaceName: name, question: item.title)
             }
-
-            try await inboxRepo.markActioned(uuid: item.uuid)
-            let destination = target?.title.map { "\($0) → Questions" } ?? "Inquiry"
-            presentUndoToast(for: item, verb: "Asked in \(destination)")
-            recordRoutingOutcome(for: item, chosenKind: "question", chosenLabel: destination)
+            guard let start else {
+                presentErrorToast("That Space is no longer available — pick another one.")
+                return
+            }
+            showOverrideSheet = false
+            presentInquiryToast(for: start)
+            recordRoutingOutcome(
+                for: item,
+                chosenKind: InboxRouteKind.startInquiry.rawValue,
+                chosenLabel: "\(start.spaceName) › Inquiry"
+            )
+            await refreshHistory()
         } catch {
-            print("⚠️ [InboxVM] Ask in deep dive failed: \(error)")
-            PersistenceHealth.note(.writeFailure, context: "InboxVM.askInDeepDive", detail: error.localizedDescription)
-            presentErrorToast("Couldn't create the question — the capture is still in your inbox.")
+            print("⚠️ [InboxVM] Start inquiry failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.startInquiry", detail: error.localizedDescription)
+            presentErrorToast("Couldn't start the inquiry — the capture is still in your inbox.")
+        }
+    }
+
+    /// The A key — no Space named yet, so the destination sheet opens on
+    /// its inquiry section.
+    func askInDeepDive(_ item: InboxItem) async {
+        showOverride(for: item, focus: .inquiry)
+    }
+
+    /// "Inquiry started in ‹Space›" — the Open follow-up lands in that
+    /// Space's Inquiries with the session running.
+    private func presentInquiryToast(for start: InboxActionExecutor.InquiryStart) {
+        presentToast(
+            message: "Inquiry started in \(start.spaceName)",
+            isError: false,
+            actionLabel: "Open",
+            action: { [weak self] in self?.openInquiry(start) }
+        )
+    }
+
+    private func openInquiry(_ start: InboxActionExecutor.InquiryStart) {
+        dismissUndoToast()
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.navigateToThinkspaceById,
+            object: nil,
+            userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: start.spaceID).userInfo
+        )
+        SpaceMapPreferences.shared.select(.inquiries, in: start.spaceID)
+        _ = SpaceViewStore.shared.select(.deepDive, for: start.spaceID)
+        let session = start.session
+        Task {
+            guard let parent = session.inquirySessionMetadata?.parentDeepDiveUUID else { return }
+            await InquirySessionLauncher.shared.launch(
+                anchorUUID: parent,
+                anchorType: "deep_dive",
+                resumeSessionUUID: session.uuid,
+                mainQuestionTitle: session.title,
+                rootQuestionUUID: session.inquirySessionMetadata?.mainQuestionUUID,
+                appState: nil
+            )
+        }
+    }
+
+    /// The capture leaves the queue for a lane — a direct choice from the
+    /// inspector's "Move to lane" menu, the row's context menu, or the
+    /// destination sheet. Same receipt grammar as every verb (toast, undo);
+    /// the Open follow-up lands inside that lane's ledger.
+    func moveToLane(_ item: InboxItem, lane: CaptureDestination) async {
+        guard processingItemIds.insert(item.uuid).inserted else { return }
+        defer { processingItemIds.remove(item.uuid) }
+
+        do {
+            _ = try await executor.executeRouteToLane(item: item, lane: lane)
+            showOverrideSheet = false
+            let laneID = lane.uuid
+            presentToast(
+                message: "Moved to \(lane.name)",
+                isError: false,
+                actionLabel: "Open",
+                action: { [weak self] in
+                    self?.dismissUndoToast()
+                    self?.pendingRoute = .captureLane(id: laneID)
+                }
+            )
+            recordRoutingOutcome(for: item, chosenKind: "lane", chosenLabel: lane.name)
+            loadEmptyStateData()
+        } catch {
+            print("⚠️ [InboxVM] Move to lane failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.moveToLane", detail: error.localizedDescription)
+            presentErrorToast("Couldn't move that capture — it's still in your inbox.")
         }
     }
 
@@ -911,10 +1024,15 @@ final class InboxViewModel {
     // MARK: - Override Sheet
 
     func showOverride(for item: InboxItem) {
+        showOverride(for: item, focus: .destinations)
+    }
+
+    func showOverride(for item: InboxItem, focus: InboxOverrideFocus) {
         overrideSearchTask?.cancel()
         overrideSearchRequestID = UUID()
         overrideItem = item
         overrideSearchResults = []
+        overrideFocus = focus
         showOverrideSheet = true
     }
 

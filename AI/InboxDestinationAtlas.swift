@@ -48,6 +48,10 @@ struct InboxAtlasEntry: Sendable, Equatable {
     let parentUUID: String?
     let parentName: String?
     var filingDestination: InboxFilingDestination? = nil
+    /// The Space whose Inquiries page hosts this topic/question (research
+    /// profiles are one-to-one with Spaces since September 2026). The
+    /// shortlist keeps that Space reachable; the card names its key.
+    var hostSpaceUUID: String? = nil
 
     /// Content fingerprint — charter or examples changing invalidates the
     /// cached embedding for this entry.
@@ -145,7 +149,7 @@ actor InboxDestinationAtlas {
         take(.group, 4)
         take(.page, 4)
         take(.cluster, 2)
-        take(.thinkspace, 2)
+        take(.thinkspace, 3)
         take(.connection, 3)
         take(.deepDive, 2)
         take(.question, 3)
@@ -153,6 +157,23 @@ actor InboxDestinationAtlas {
         // Clients are few and the misattribution stakes are high ("always
         // Josh") — the model always sees the full roster to pick or veto.
         result.append(contentsOf: scored[.client] ?? [])
+
+        // A research topic's ROOM must be reachable: when a topic (or one of
+        // its open questions) makes the shortlist, the Space that hosts it
+        // rides along even if its own charter scored low — otherwise
+        // startInquiry has no valid key and a research capture falls to a
+        // folder. Spaces host inquiries (September 2026).
+        let present = Set(result.map(\.entry.key))
+        var hostSpaceUUIDs = Set<String>()
+        for scored in result where scored.entry.kind == .deepDive || scored.entry.kind == .question {
+            if let host = scored.entry.hostSpaceUUID { hostSpaceUUIDs.insert(host) }
+        }
+        for host in hostSpaceUUIDs {
+            let key = "thinkspace-\(host)"
+            guard !present.contains(key),
+                  let entry = scored[.thinkspace]?.first(where: { $0.entry.key == key }) else { continue }
+            result.append(entry)
+        }
 
         return result
     }
@@ -178,7 +199,34 @@ actor InboxDestinationAtlas {
         async let inquiryEntries = buildInquiryEntries()
         async let clientEntries = buildClientEntries()
         async let seedlingEntries = buildSeedlingEntries()
-        return await spatialEntries + compositionEntries + connectionEntries + inquiryEntries + clientEntries + seedlingEntries
+        let inquiries = await inquiryEntries
+        let spaces = Self.annotatingInquiries(await spatialEntries, inquiries: inquiries)
+        return await spaces + compositionEntries + connectionEntries + inquiries + clientEntries + seedlingEntries
+    }
+
+    /// A Space that hosts research says so on its card — the open questions
+    /// living there are the best evidence that a research capture belongs
+    /// in that Space's Inquiries, and they pull the Space up in retrieval.
+    private static func annotatingInquiries(_ spaces: [InboxAtlasEntry], inquiries: [InboxAtlasEntry]) -> [InboxAtlasEntry] {
+        var questionsBySpace: [String: [String]] = [:]
+        for entry in inquiries where entry.kind == .question {
+            guard let host = entry.hostSpaceUUID else { continue }
+            questionsBySpace[host, default: []].append(entry.name)
+        }
+        let hosting = Set(inquiries.filter { $0.kind == .deepDive }.compactMap(\.hostSpaceUUID))
+        return spaces.map { space in
+            guard space.kind == .thinkspace, hosting.contains(space.uuid) else { return space }
+            let questions = Array((questionsBySpace[space.uuid] ?? []).prefix(3))
+            let inquiryLine = questions.isEmpty
+                ? "Hosts inquiries — research on this workspace's subjects starts here (startInquiry)."
+                : "Hosts inquiries such as: \(questions.map { "\"\($0)\"" }.joined(separator: ", ")) — new research on these subjects starts here (startInquiry)."
+            return InboxAtlasEntry(
+                key: space.key, kind: space.kind, uuid: space.uuid, name: space.name,
+                charter: space.charter + " " + inquiryLine,
+                examples: space.examples, parentUUID: space.parentUUID, parentName: space.parentName,
+                filingDestination: space.filingDestination, hostSpaceUUID: nil
+            )
+        }
     }
 
     private func buildCompositionEntries() async -> [InboxAtlasEntry] {
@@ -325,8 +373,12 @@ actor InboxDestinationAtlas {
         for dive in deepDives.sorted(by: { $0.updatedAt > $1.updatedAt }) {
             guard let title = dive.title, !title.isEmpty else { continue }
             let metadata = dive.deepDiveMetadata
+            let hostSpace = metadata?.primaryThinkspaceUUID ?? metadata?.parentThinkspaceUUIDs?.first
 
             var charterParts: [String] = ["Research topic."]
+            if let hostSpace {
+                charterParts.append("Its inquiries live in workspace \"thinkspace-\(hostSpace)\" — new research there uses startInquiry with that key.")
+            }
             if let about = dive.body, !about.isEmpty {
                 charterParts.append(String(about.prefix(160)))
             }
@@ -349,7 +401,8 @@ actor InboxDestinationAtlas {
                 charter: charterParts.joined(separator: " "),
                 examples: examples,
                 parentUUID: nil,
-                parentName: nil
+                parentName: nil,
+                hostSpaceUUID: hostSpace
             ))
 
             for question in open.prefix(openQuestionsPerDive) {
@@ -363,7 +416,8 @@ actor InboxDestinationAtlas {
                     charter: "Open research question in \(title). Material that helps answer it belongs here.",
                     examples: [],
                     parentUUID: dive.uuid,
-                    parentName: title
+                    parentName: title,
+                    hostSpaceUUID: hostSpace
                 ))
             }
         }

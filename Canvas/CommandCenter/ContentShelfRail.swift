@@ -74,6 +74,10 @@ struct ContentShelfRail: View {
     var showsClientFilter = true
 
     @State private var searchText = ""
+    /// One lane at a time: drafts that still need a day, or ideas to seed
+    /// one. Two long ledgers stacked read as a dump; a lane reads as a queue.
+    @State private var lane: ShelfLane = .drafts
+    @State private var hasChosenLane = false
     @State private var selectedClientUUID: String?
     @State private var clients: [ShelfClient] = []
     @State private var ideas: [ShelfIdea] = []
@@ -88,6 +92,7 @@ struct ContentShelfRail: View {
         VStack(alignment: .leading, spacing: DS.space12) {
             railHeader
             searchField
+            laneSwitcher
             if scope == .all && showsClientFilter { clientPills }
             shelfList
         }
@@ -126,6 +131,12 @@ struct ContentShelfRail: View {
         plannedContentUUIDs = Set(
             allContent.filter { $0.scheduledAt != nil || $0.isPublished }.map(\.id)
         )
+        // First arrival opens on the lane that has work; the user's own pick
+        // holds after that.
+        if !hasChosenLane {
+            lane = drafts.isEmpty && !ideas.isEmpty ? .ideas : .drafts
+            hasChosenLane = true
+        }
         isLoading = false
     }
 
@@ -143,11 +154,29 @@ struct ContentShelfRail: View {
                 .tracking(1.4)
                 .foregroundStyle(DS.textMuted)
             Spacer()
-            Text("\(filteredIdeas.count + filteredDrafts.count)")
+            Text("\(laneCount)")
                 .font(DS.footnote.monospacedDigit())
                 .foregroundStyle(DS.textMuted)
                 .contentTransition(.numericText())
         }
+    }
+
+    enum ShelfLane: String, CaseIterable, Hashable {
+        case drafts, ideas
+        var title: String { rawValue.capitalized }
+    }
+
+    private var laneCount: Int { lane == .drafts ? filteredDrafts.count : filteredIdeas.count }
+
+    private var laneSwitcher: some View {
+        CosmoSegmentedSwitcher(
+            options: ShelfLane.allCases,
+            label: { $0.title },
+            help: { $0 == .drafts ? "Drafts still waiting for a publication day" : "Ideas — drop one on a day to start a linked draft" },
+            selection: $lane
+        )
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel("Shelf lane")
     }
 
     private var searchField: some View {
@@ -264,13 +293,12 @@ struct ContentShelfRail: View {
         CosmoSlimScroll {
             LazyVStack(alignment: .leading, spacing: DS.space12) {
                 if isLoading {
-                    ProgressView().controlSize(.small)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, DS.space16)
-                } else if filteredIdeas.isEmpty && filteredDrafts.isEmpty {
+                    shelfSkeleton
+                } else if laneCount == 0 {
                     shelfTeachingState
-                } else {
+                } else if lane == .drafts {
                     draftsSection
+                } else {
                     ideasSection
                 }
             }
@@ -280,8 +308,8 @@ struct ContentShelfRail: View {
         // The symmetric gesture: drag a calendar chip back onto the shelf
         // to unschedule it — it returns to DRAFTS.
         .dropDestination(for: String.self) { payloads, _ in
-            let uuids = payloads.compactMap { raw -> String? in
-                guard case .content(let uuid) = ContentShelfPayload(string: raw) else { return nil }
+            let uuids = payloads.flatMap { $0.components(separatedBy: "\n") }.compactMap { raw -> String? in
+                guard !raw.isEmpty, case .content(let uuid) = ContentShelfPayload(string: raw) else { return nil }
                 return uuid
             }
             guard !uuids.isEmpty else { return false }
@@ -296,11 +324,22 @@ struct ContentShelfRail: View {
         }
     }
 
+    /// Same card chrome as the rows, no spinner in a content area.
+    private var shelfSkeleton: some View {
+        VStack(spacing: DS.space6) {
+            ForEach(0..<5, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(DS.glassSectionFill)
+                    .frame(height: 40)
+            }
+        }
+        .accessibilityLabel("Loading the shelf")
+    }
+
     @ViewBuilder
     private var draftsSection: some View {
         if !filteredDrafts.isEmpty {
             VStack(alignment: .leading, spacing: DS.space4) {
-                sectionHeader("DRAFTS", count: filteredDrafts.count)
                 ForEach(filteredDrafts) { draft in
                     ShelfRow(
                         title: draft.title,
@@ -319,7 +358,6 @@ struct ContentShelfRail: View {
     private var ideasSection: some View {
         if !filteredIdeas.isEmpty {
             VStack(alignment: .leading, spacing: DS.space4) {
-                sectionHeader("IDEAS", count: filteredIdeas.count)
                 ForEach(filteredIdeas) { idea in
                     ShelfRow(
                         title: idea.title,
@@ -335,27 +373,15 @@ struct ContentShelfRail: View {
         }
     }
 
-    private func sectionHeader(_ label: String, count: Int) -> some View {
-        HStack(spacing: DS.space6) {
-            Text(label)
-                .font(DS.smallCaps)
-                .tracking(1.4)
-                .foregroundStyle(DS.textMuted)
-            Spacer()
-            Text("\(count)")
-                .font(DS.footnote.monospacedDigit())
-                .foregroundStyle(DS.textMuted)
-                .contentTransition(.numericText())
-        }
-    }
-
     private var shelfTeachingState: some View {
         VStack(alignment: .leading, spacing: DS.space6) {
-            Text(searchTokens.isEmpty ? "The shelf is empty" : "No matches")
+            Text(searchTokens.isEmpty ? (lane == .drafts ? "No drafts waiting" : "No ideas on the shelf") : "No matches")
                 .font(DS.callout.weight(.semibold))
                 .foregroundStyle(DS.text)
             Text(searchTokens.isEmpty
-                ? "Capture ideas and they queue up here, ready to drag onto a day."
+                ? (lane == .drafts
+                    ? "Drafts without a publication day gather here, ready to drag onto the month."
+                    : "Capture ideas and they queue up here — dropping one on a day starts a linked draft.")
                 : "Try fewer words — the shelf matches every word you type.")
                 .font(DS.caption)
                 .foregroundStyle(DS.textMuted)

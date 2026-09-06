@@ -21,6 +21,7 @@ final class MediaAttachmentRepository {
             mutable.syncUpdatedAt = ISO8601.string(from: Date())
             try mutable.insert(db)
             mutable.id = db.lastInsertedRowID
+            try CaptureSyncOutbox.enqueue(db, table: "media_attachments", uuid: mutable.uuid)
             return mutable
         }
         await ChangeTracker.shared.trackInsert(table: MediaAttachment.databaseTableName, entity: saved)
@@ -121,6 +122,7 @@ final class MediaAttachmentRepository {
             attachment.updatedAt = ISO8601.string(from: Date())
             attachment.syncUpdatedAt = attachment.updatedAt
             try attachment.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "media_attachments", uuid: attachment.uuid)
             return attachment
         }
         if let updated {

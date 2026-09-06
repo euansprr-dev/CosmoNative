@@ -53,6 +53,7 @@ final class CapturedItemRepository: ObservableObject {
             var mutable = item
             mutable.syncUpdatedAt = ISO8601.string(from: Date())
             try mutable.insert(db)
+            try CaptureSyncOutbox.enqueue(db, table: "captured_items", uuid: mutable.uuid)
             return mutable
         }
         await ChangeTracker.shared.trackInsert(table: CapturedItem.databaseTableName, entity: saved)
@@ -144,6 +145,7 @@ final class CapturedItemRepository: ObservableObject {
             item.parentProjectId = parentProjectId
             Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "captured_items", uuid: item.uuid)
             return item
         }
         await track(updated)
@@ -161,6 +163,7 @@ final class CapturedItemRepository: ObservableObject {
             item.cleanText = trimmed
             Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "captured_items", uuid: item.uuid)
             return item
         }
         await track(updated)
@@ -175,6 +178,7 @@ final class CapturedItemRepository: ObservableObject {
             item.mediaAttachmentIdsJSON = encodeCapturedItemArray(merged)
             Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            try CaptureSyncOutbox.enqueue(db, table: "captured_items", uuid: item.uuid)
             return item
         }
         await track(updated)

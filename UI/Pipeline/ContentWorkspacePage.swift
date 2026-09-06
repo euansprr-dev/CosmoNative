@@ -58,6 +58,7 @@ struct ContentWorkspacePage: View {
             updateLayout()
             syncDestination(to: value)
         }
+        .onChange(of: listLayout) { _, _ in updateLayout() }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openPipeline)) { notification in
             if notification.userInfo?["tab"] as? String == "ideas" { tab = .ideas }
             else { tab = notification.userInfo?["view"] as? String == "calendar" ? .calendar : .pipeline }
@@ -83,7 +84,8 @@ struct ContentWorkspacePage: View {
             }
             if tab == .pipeline || visitedTabs.contains(.pipeline) {
                 PipelinePage(model: pipelineModel, workspace: true, availableWidth: width,
-                             displayView: listLayout ? .list : .board, isActive: tab == .pipeline)
+                             displayView: listLayout ? .list : .board, isActive: tab == .pipeline,
+                             layout: $listLayout)
                     .modifier(ContentTabVisibility(active: tab == .pipeline))
             }
             if tab == .calendar || visitedTabs.contains(.calendar) {
@@ -97,24 +99,20 @@ struct ContentWorkspacePage: View {
         .transaction { $0.animation = nil }
     }
 
+    /// The masthead: a bare title (the masthead law), the scope beside the one
+    /// hero affordance, and the destination switcher on its own line. It clears
+    /// the app's floating chrome band (sidebar toggle + trail) with real air —
+    /// the title used to sit 2pt under the islands.
     private var header: some View {
         VStack(alignment: .leading, spacing: DS.space16) {
-            HStack(alignment: .firstTextBaseline, spacing: DS.space16) {
+            HStack(alignment: .center, spacing: DS.space10) {
                 Text("Content").font(DS.pageTitle).foregroundStyle(DS.text)
                 Spacer(minLength: DS.space16)
                 if tab != .ideas { scopeMenu }
-                if let client = selectedClient {
-                    Button { briefClient = client } label: {
-                        HStack(spacing: DS.space6) {
-                            Image(systemName: "doc.text")
-                            if !compact { Text("Client brief") }
-                        }
-                    }
-                        .accessibilityLabel("Client brief")
-                        .buttonStyle(.borderless).help("Audience, voice and strategy for \(client.name)")
-                }
+                if let client = selectedClient { briefButton(client) }
+                primaryButton
             }
-            HStack(spacing: DS.space16) {
+            HStack(alignment: .center, spacing: DS.space16) {
                 CosmoSegmentedSwitcher(
                     options: ContentWorkspaceTab.allCases,
                     label: { $0.title }, icon: { $0.cosmoIcon },
@@ -123,44 +121,50 @@ struct ContentWorkspacePage: View {
                 )
                 .fixedSize(horizontal: true, vertical: false)
                 Spacer(minLength: DS.space8)
-                if tab == .pipeline {
-                    Menu {
-                        Button("Board", systemImage: "rectangle.split.3x1") { listLayout = false; updateLayout() }
-                        Button("List", systemImage: "list.bullet") { listLayout = true; updateLayout() }
-                    } label: {
-                        HStack(spacing: DS.space6) {
-                            Image(systemName: listLayout ? "list.bullet" : "rectangle.split.3x1")
-                            if !compact { Text(listLayout ? "List" : "Board") }
-                        }
-                    }
-                    .menuStyle(.borderlessButton).fixedSize().help("Change pipeline layout")
-                    .accessibilityLabel(listLayout ? "List layout" : "Board layout")
-                }
-                Menu {
-                    Button("New idea", systemImage: "lightbulb") { ideasModel.createIdea(clientUUID: pipelineModel.scope.clientUUID) }
-                    Button("New draft", systemImage: "square.and.pencil") { pipelineModel.createDraft() }
-                } label: {
-                    HStack(spacing: DS.space6) {
-                        Image(systemName: "plus")
-                        if !compact { Text(tab == .ideas ? "New idea" : "New draft") }
-                    }
-                } primaryAction: { createInCurrentTab() }
-                    .buttonStyle(.borderedProminent).tint(DS.accent)
-                    .disabled(pipelineModel.creatingDraft)
-                    .accessibilityLabel(tab == .ideas ? "New idea" : "New draft")
-                    .help("Create in this scope (⌘N)")
-            }
-            if case .space(let id) = pipelineModel.scope {
-                HStack(spacing: DS.space8) {
-                    Image(systemName: "rectangle.3.group")
-                    Text("From \(ThinkspaceManager.shared.thinkspaces.first { $0.id == id }?.identityLabel ?? "this Space")")
-                    Button("Return to Space", systemImage: "arrow.up.right") { destination = .thinkspace(id: id) }
-                        .buttonStyle(.borderless)
-                }
-                .font(DS.caption).foregroundStyle(DS.textSecondary)
+                if case .space(let id) = pipelineModel.scope { spaceOrigin(id) }
             }
         }
-        .padding(.horizontal, DS.space32).padding(.top, DS.space48).padding(.bottom, DS.space20)
+        .padding(.horizontal, DS.space32)
+        .padding(.top, SpaceChromeMetrics.contentTopInset + DS.space16)
+        .padding(.bottom, DS.space20)
+    }
+
+    /// One accent capsule — never a split button. ⌘N and the active tab decide
+    /// what "new" means; the label says which.
+    private var primaryButton: some View {
+        Button(action: createInCurrentTab) {
+            HStack(spacing: DS.space6) {
+                Image(systemName: "plus").font(DS.callout.weight(.semibold))
+                if !compact { Text(tab == .ideas ? "New idea" : "New draft") }
+            }
+        }
+        .buttonStyle(ContentPrimaryButtonStyle())
+        .disabled(pipelineModel.creatingDraft)
+        .help(tab == .ideas ? "New idea (⌘N)" : "New draft (⌘N)")
+        .accessibilityLabel(tab == .ideas ? "New idea" : "New draft")
+    }
+
+    private func briefButton(_ client: PipelineClient) -> some View {
+        Button { briefClient = client } label: {
+            HStack(spacing: DS.space6) {
+                Image(systemName: "doc.text").font(DS.caption.weight(.medium))
+                if !compact { Text("Client brief").font(DS.callout.weight(.medium)) }
+            }
+            .modifier(ContentWorkspaceChip())
+        }
+        .buttonStyle(.plain)
+        .help("Audience, voice and strategy for \(client.name)")
+        .accessibilityLabel("Client brief")
+    }
+
+    private func spaceOrigin(_ id: String) -> some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: "rectangle.3.group")
+            Text("From \(ThinkspaceManager.shared.thinkspaces.first { $0.id == id }?.identityLabel ?? "this Space")")
+            Button("Return to Space", systemImage: "arrow.up.right") { destination = .thinkspace(id: id) }
+                .buttonStyle(.borderless)
+        }
+        .font(DS.caption).foregroundStyle(DS.textSecondary)
     }
 
     private var selectedClient: PipelineClient? {
@@ -177,6 +181,8 @@ struct ContentWorkspacePage: View {
         }
     }
 
+    /// Whose work is on the table — a quiet chip beside the hero, in the
+    /// filter-chip grammar. A client wears its own color as the mark.
     private var scopeMenu: some View {
         Menu {
             Button("All content", systemImage: pipelineModel.scope == .all ? "checkmark" : "rectangle.stack") { setScope(.all) }
@@ -191,9 +197,22 @@ struct ContentWorkspacePage: View {
             }
             Divider()
             Button("Manage clients…", systemImage: "person.2") { showingClients = true }
-        } label: { Label(scopeTitle, systemImage: selectedClient == nil ? "line.3.horizontal.decrease" : "person.crop.circle") }
-        .menuStyle(.borderlessButton).fixedSize().font(DS.callout)
+        } label: {
+            HStack(spacing: DS.space6) {
+                if let client = selectedClient {
+                    Circle().fill(DS.clientColor(for: client.uuid)).frame(width: 7, height: 7)
+                } else {
+                    Image(systemName: pipelineModel.scope == .unassigned ? "person" : "line.3.horizontal.decrease")
+                        .font(DS.caption.weight(.medium))
+                }
+                Text(scopeTitle).font(DS.callout.weight(.medium)).lineLimit(1)
+                Image(systemName: "chevron.down").font(DS.caption2.weight(.semibold))
+            }
+            .modifier(ContentWorkspaceChip())
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .help("Choose the scope for ideas, pipeline and calendar")
+        .accessibilityLabel("Scope: \(scopeTitle)")
     }
 
     private var clientsSheet: some View {
@@ -293,5 +312,48 @@ private struct ContentTabVisibility: ViewModifier {
             .allowsHitTesting(active)
             .accessibilityHidden(!active)
             .zIndex(active ? 1 : 0)
+    }
+}
+
+/// The workspace's one hero affordance: an accent capsule that lights on hover
+/// and compresses on press. (`ButtonStyleConfiguration` spelled out — the repo's
+/// top-level `Configuration` type shadows the ButtonStyle alias.)
+private struct ContentPrimaryButtonStyle: ButtonStyle {
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: ButtonStyleConfiguration) -> some View {
+        configuration.label
+            .font(DS.callout.weight(.semibold))
+            .foregroundStyle(DS.textOnAccent)
+            .padding(.horizontal, DS.space16)
+            .frame(height: 34)
+            .background(hovered ? DS.accentHover : DS.accent, in: .capsule)
+            .opacity(isEnabled ? 1 : 0.55)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : ProMotionSprings.hover, value: hovered)
+            .animation(reduceMotion ? nil : ProMotionSprings.press, value: configuration.isPressed)
+            .contentShape(.capsule)
+            .onHover { hovered = $0 }
+    }
+}
+
+/// Secondary masthead chips (scope, client brief): the filter-chip grammar —
+/// quiet input fill, hairline, ink on hover.
+private struct ContentWorkspaceChip: ViewModifier {
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(hovered ? DS.text : DS.textSecondary)
+            .padding(.horizontal, DS.space12)
+            .frame(height: 32)
+            .background(hovered ? DS.glassInputFillFocused : DS.glassInputFill, in: .capsule)
+            .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 0.5))
+            .contentShape(.capsule)
+            .onHover { hovered = $0 }
+            .animation(reduceMotion ? nil : ProMotionSprings.hover, value: hovered)
     }
 }
